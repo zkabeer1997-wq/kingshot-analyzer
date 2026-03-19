@@ -4191,8 +4191,41 @@ function optimizeFormation(atk, def, total) {
 }
 
 // Simplified battle sim for stat-gap analysis (uses BR stats directly)
+// Global formula coefficients — loaded from Supabase on page load, updated by auto-calibration
+var formulaCoeffs = {
+  dmg_sqrt_weight: 1.0,
+  atk_weight: 1.0,
+  leth_weight: 1.0,
+  def_weight: 1.0,
+  hp_weight: 1.0,
+  injured_scale: 1.0,
+  version: 1
+};
+
+// Load formula coefficients from Supabase
+(function loadFormulaConfig() {
+  if (typeof fetch !== "undefined") {
+    fetch(SB_URL + "/rest/v1/formula_config?config_key=eq.default&select=coefficients,sample_count,avg_error,last_calibrated_at", {
+      headers: {
+        "apikey": SB_ANON_KEY,
+        "Authorization": "Bearer " + SB_ANON_KEY
+      }
+    }).then(function (r) {
+      return r.json();
+    }).then(function (data) {
+      if (data && data[0] && data[0].coefficients) {
+        formulaCoeffs = data[0].coefficients;
+        console.log("[Kingshot] Formula v" + (formulaCoeffs.version || 1) + " loaded — " + (data[0].sample_count || 0) + " samples, " + (data[0].avg_error || 0) + "% error");
+      }
+    }).catch(function () {});
+  }
+})();
 function simulateBattle(myBR, oppBR) {
-  // Per-troop damage: Kills = sqrt(Troops) × (Atk × Leth) / (EnemyDef × EnemyHP)
+  const C_ATK = formulaCoeffs.atk_weight || 1.0;
+  const C_LETH = formulaCoeffs.leth_weight || 1.0;
+  const C_DEF = formulaCoeffs.def_weight || 1.0;
+  const C_HP = formulaCoeffs.hp_weight || 1.0;
+  const C_INJ = formulaCoeffs.injured_scale || 1.0;
   let myDmgTotal = 0,
     oppDmgTotal = 0;
   const myPerTroop = {},
@@ -4211,20 +4244,13 @@ function simulateBattle(myBR, oppBR) {
     const oppDef = 1 + (oppBR[t + "Def"] || oppBR.def || 0) / 100;
     const oppHp = 1 + (oppBR[t + "Hp"] || oppBR.hp || 0) / 100;
 
-    // My troops damage to opponent's troops of same type
-    const myDmg = myT > 0 ? Math.sqrt(myT) * (myAtk * myLeth) / (oppDef * oppHp || 1) : 0;
-    // Opponent's troops damage to my troops of same type
-    const oppDmg = oppT > 0 ? Math.sqrt(oppT) * (oppAtk * oppLeth) / (myDef * myHp || 1) : 0;
+    // Calibrated formula: Kills = sqrt(Troops) × (Atk^C_ATK × Leth^C_LETH) / (Def^C_DEF × HP^C_HP)
+    const myDmg = myT > 0 ? Math.sqrt(myT) * (Math.pow(myAtk, C_ATK) * Math.pow(myLeth, C_LETH)) / (Math.pow(oppDef, C_DEF) * Math.pow(oppHp, C_HP) || 1) : 0;
+    const oppDmg = oppT > 0 ? Math.sqrt(oppT) * (Math.pow(oppAtk, C_ATK) * Math.pow(oppLeth, C_LETH)) / (Math.pow(myDef, C_DEF) * Math.pow(myHp, C_HP) || 1) : 0;
     myPerTroop[t] = myDmg;
     oppPerTroop[t] = oppDmg;
     myDmgTotal += myDmg;
     oppDmgTotal += oppDmg;
-
-    // Troops injured: proportional to damage received relative to total damage capacity
-    // Opponent's damage to my troops → my injured; My damage to opp troops → opp injured
-    // Scale: damage as proportion of troop count (capped at troop count)
-    const myTotalDmgCapacity = myDmgTotal || 1;
-    const oppTotalDmgCapacity = oppDmgTotal || 1;
   }
 
   // Calculate injured troops: distribute total enemy damage proportionally across your troop types by count
@@ -4240,8 +4266,8 @@ function simulateBattle(myBR, oppBR) {
     // Scale: injured = troop_count × (enemy_damage_to_this_type / (enemy_damage_to_this_type + my_resistance))
     // Simpler approach: injured ≈ min(troopCount, troopCount × oppDmg/(oppDmg + myDmg) × damageIntensity)
     const totalDmg = myDmgTotal + oppDmgTotal || 1;
-    myInjured[t] = Math.min(myT, Math.round(myT * oppDmgToMe / (oppDmgToMe + (myPerTroop[t] || 1)) * (oppDmgTotal / (myDmgTotal || 1))));
-    oppInjured[t] = Math.min(oppT, Math.round(oppT * myDmgToOpp / (myDmgToOpp + (oppPerTroop[t] || 1)) * (myDmgTotal / (oppDmgTotal || 1))));
+    myInjured[t] = Math.min(myT, Math.round(myT * oppDmgToMe / (oppDmgToMe + (myPerTroop[t] || 1)) * (oppDmgTotal / (myDmgTotal || 1)) * C_INJ));
+    oppInjured[t] = Math.min(oppT, Math.round(oppT * myDmgToOpp / (myDmgToOpp + (oppPerTroop[t] || 1)) * (myDmgTotal / (oppDmgTotal || 1)) * C_INJ));
   }
   return {
     myDmg: myDmgTotal,
