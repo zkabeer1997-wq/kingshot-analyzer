@@ -4665,30 +4665,27 @@ function App() {
     const payload = {
       governor_name: "User",
       kingdom: "Auto",
-      // Predicted values
       predicted_ratio: battleResult ? battleResult.ratio : null,
-      predicted_myDmg: battleResult ? battleResult.myDmg : null,
-      predicted_oppDmg: battleResult ? battleResult.oppDmg : null,
-      predicted_myInjured: battleResult ? battleResult.myTotalInjured : null,
-      predicted_oppInjured: battleResult ? battleResult.oppTotalInjured : null,
-      // Actual values
+      predicted_mydmg: battleResult ? battleResult.myDmg : null,
+      predicted_oppdmg: battleResult ? battleResult.oppDmg : null,
+      predicted_myinjured: battleResult ? battleResult.myTotalInjured : null,
+      predicted_oppinjured: battleResult ? battleResult.oppTotalInjured : null,
       actual_outcome: actualResult.outcome,
-      actual_myPowerLost: actualResult.myPowerLost,
-      actual_oppPowerLost: actualResult.oppPowerLost,
-      actual_myInjuredInf: actualResult.myInjuredInf,
-      actual_myInjuredCav: actualResult.myInjuredCav,
-      actual_myInjuredArch: actualResult.myInjuredArch,
-      actual_oppInjuredInf: actualResult.oppInjuredInf,
-      actual_oppInjuredCav: actualResult.oppInjuredCav,
-      actual_oppInjuredArch: actualResult.oppInjuredArch,
-      // Input data snapshot
-      input_myBR: myBR,
-      input_oppBR: oppBR,
+      actual_mypowerlost: actualResult.myPowerLost,
+      actual_opppowerlost: actualResult.oppPowerLost,
+      actual_myinjuredinf: actualResult.myInjuredInf,
+      actual_myinjuredcav: actualResult.myInjuredCav,
+      actual_myinjuredarch: actualResult.myInjuredArch,
+      actual_oppinjuredinf: actualResult.oppInjuredInf,
+      actual_oppinjuredcav: actualResult.oppInjuredCav,
+      actual_oppinjuredarch: actualResult.oppInjuredArch,
+      input_mybr: myBR,
+      input_oppbr: oppBR,
       profile_type: "actual_result"
     };
     if (typeof sbInsert === "function") {
-      sbInsert("battle_reports", payload).then(res => {
-        if (res.ok) setActualSubmitted(true);
+      sbInsert("battle_reports", payload).then(function (res) {
+        if (res.ok) setActualSubmitted(true);else console.error("Submit error:", res.error);
       });
     }
   }, [actualResult, battleResult, myBR, oppBR]);
