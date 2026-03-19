@@ -20,7 +20,6 @@ a { color: #f59e0b; }
 <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
 <div id="root"></div>
@@ -1833,6 +1832,16 @@ function PlayerPanel({
       charms: c
     };
   }), [setData]);
+  const setAllGov = useCallback(tier => setData(d => {
+    const g = {
+      ...d.govGear
+    };
+    GOV_GEAR_PIECES.forEach(p => g[p.key] = tier);
+    return {
+      ...d,
+      govGear: g
+    };
+  }), [setData]);
   const setB = calcSetBonuses(data.govGear);
   return /*#__PURE__*/React.createElement("div", {
     style: S.panel
@@ -1856,7 +1865,35 @@ function PlayerPanel({
       display: "grid",
       gap: 8
     }
-  }, GOV_GEAR_PIECES.map(p => /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      ...S.fieldLabel,
+      marginBottom: 0,
+      flexShrink: 0
+    }
+  }, "SET ALL"), /*#__PURE__*/React.createElement("select", {
+    onChange: e => {
+      if (e.target.value) setAllGov(e.target.value);
+      e.target.value = "";
+    },
+    style: {
+      ...S.sel,
+      flex: 1
+    },
+    defaultValue: ""
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "",
+    disabled: true
+  }, "\u2014 Choose tier for all 6 pieces \u2014"), GOV_GEAR_LEVELS.map(g => /*#__PURE__*/React.createElement("option", {
+    key: g.id,
+    value: g.id
+  }, g.label, " (", g.bonus.toFixed(1), "%)")))), GOV_GEAR_PIECES.map(p => /*#__PURE__*/React.createElement("div", {
     key: p.key,
     style: {
       display: "grid",
@@ -1907,33 +1944,35 @@ function PlayerPanel({
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
-      marginBottom: 3
+      marginBottom: 3,
+      gap: 6
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
       ...S.fieldLabel,
       marginBottom: 0,
-      color: TROOP_COLORS[troop]
+      color: TROOP_COLORS[troop],
+      flexShrink: 0
     }
-  }, TROOP_NAMES[troop]), /*#__PURE__*/React.createElement("div", {
+  }, TROOP_NAMES[troop]), /*#__PURE__*/React.createElement("select", {
+    onChange: e => {
+      setAllCharms(troop, Number(e.target.value));
+    },
+    value: "",
     style: {
-      display: "flex",
-      gap: 2
+      ...S.sel,
+      width: "auto",
+      minWidth: 120,
+      fontSize: 10,
+      padding: "2px 6px"
     }
-  }, [0, 5, 11, 15, 20].map(lv => /*#__PURE__*/React.createElement("button", {
-    key: lv,
-    onClick: () => setAllCharms(troop, lv),
-    style: {
-      padding: "1px 5px",
-      fontSize: 9,
-      borderRadius: 3,
-      border: `1px solid ${C.inputBorder}`,
-      background: C.inputBg,
-      color: C.textDim,
-      cursor: "pointer",
-      fontFamily: C.fontDisplay
-    }
-  }, "All ", lv)))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "",
+    disabled: true
+  }, "Set All"), CHARM_LEVELS.map(c => /*#__PURE__*/React.createElement("option", {
+    key: c.level,
+    value: c.level
+  }, "All \u2192 Lv", c.level, " (", c.bonus, "%)")))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gridTemplateColumns: "1fr 1fr 1fr",
@@ -2033,7 +2072,7 @@ function PlayerPanel({
       onChange: e => updateHero(s.key, "forge", Math.max(0, Math.min(20, Number(e.target.value) || 0))),
       style: {
         ...S.numIn,
-        width: 42
+        width: 52
       }
     })), /*#__PURE__*/React.createElement("span", {
       style: {
@@ -4438,9 +4477,6 @@ function BattleReportPanel({
 // ═══════════════════════════════════════════════════════════════
 
 const TABS = [{
-  id: "ocr",
-  label: "📸 OCR"
-}, {
   id: "compare",
   label: "⚔️ Compare"
 }, {
@@ -4570,372 +4606,6 @@ function App() {
   const [joinerResults, setJoinerResults] = useState(null);
   const [formationResults, setFormationResults] = useState(null);
   const [showAllRecs, setShowAllRecs] = useState(false);
-
-  // OCR state
-  const [ocrImages, setOcrImages] = useState({
-    overview: null,
-    gear: null,
-    stats: null
-  });
-  const [ocrPreviews, setOcrPreviews] = useState({
-    overview: null,
-    gear: null,
-    stats: null
-  });
-  const [ocrStatus, setOcrStatus] = useState({
-    overview: null,
-    gear: null,
-    stats: null
-  });
-  const [ocrResults, setOcrResults] = useState(null);
-  const [ocrProcessing, setOcrProcessing] = useState(false);
-  const [ocrRawText, setOcrRawText] = useState({});
-  const handleOcrUpload = useCallback((slot, file) => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      setOcrImages(prev => ({
-        ...prev,
-        [slot]: ev.target.result
-      }));
-      setOcrPreviews(prev => ({
-        ...prev,
-        [slot]: ev.target.result
-      }));
-      setOcrStatus(prev => ({
-        ...prev,
-        [slot]: "ready"
-      }));
-    };
-    reader.readAsDataURL(file);
-  }, []);
-  const processOcr = useCallback(async () => {
-    if (typeof Tesseract === "undefined") {
-      alert("Tesseract.js is still loading. Please wait a moment and try again.");
-      return;
-    }
-    setOcrProcessing(true);
-    setOcrResults(null);
-    setOcrRawText({});
-    const results = {};
-    const rawTexts = {};
-
-    // Preprocess: grayscale, contrast, threshold at 60% (tested optimal for Kingshot screenshots)
-    const preprocessImage = dataUrl => {
-      return new Promise(resolve => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement("canvas");
-          const scale = Math.min(2, 2000 / Math.max(img.width, img.height));
-          canvas.width = img.width * scale;
-          canvas.height = img.height * scale;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const d = imageData.data;
-          for (let i = 0; i < d.length; i += 4) {
-            let gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-            gray = (gray - 128) * 1.5 + 128;
-            gray = Math.max(0, Math.min(255, gray));
-            const bw = gray < 153 ? 0 : 255; // 153/255 = 60% threshold
-            d[i] = d[i + 1] = d[i + 2] = bw;
-          }
-          ctx.putImageData(imageData, 0, 0);
-          resolve(canvas.toDataURL("image/png"));
-        };
-        img.src = dataUrl;
-      });
-    };
-    try {
-      const worker = await Tesseract.createWorker("eng");
-      const ocrImage = async dataUrl => {
-        const processed = await preprocessImage(dataUrl);
-        const {
-          data: {
-            text
-          }
-        } = await worker.recognize(processed);
-        return text;
-      };
-
-      // ========== Screenshot 1: Battle Overview ==========
-      if (ocrImages.overview) {
-        setOcrStatus(prev => ({
-          ...prev,
-          overview: "processing"
-        }));
-        try {
-          const text = await ocrImage(ocrImages.overview);
-          rawTexts.overview = text;
-          const fullText = text.replace(/\n/g, " ");
-          const overview = {};
-          // Squad
-          const sq = fullText.match(/([\d,]+)\s*Squad\s*([\d,.]+)/i);
-          if (sq) {
-            overview.mySquad = parseInt(sq[1].replace(/[,.]/g, ""));
-            overview.oppSquad = parseInt(sq[2].replace(/[,.]/g, ""));
-          }
-          // Injured (not lightly)
-          const inj = fullText.match(/([\d,]+)\s*Injured\s*([\d,.]+)/i);
-          if (inj) {
-            overview.myInjured = parseInt(inj[1].replace(/[,.]/g, ""));
-            overview.oppInjured = parseInt(inj[2].replace(/[,.]/g, ""));
-          }
-          // Lightly Injured
-          const li = fullText.match(/([\d,]+)\s*Lightly\s*Injured[^\d]*([\d,.]+)/i);
-          if (li) {
-            overview.myLightlyInjured = parseInt(li[1].replace(/[,.]/g, ""));
-            overview.oppLightlyInjured = parseInt(li[2].replace(/[,.]/g, ""));
-          }
-          // Losses (OCR often reads "0" as "fe)" or "fa)" near "Losses")
-          const lo = fullText.match(/([\d,]+)\s*Losses?\s*([\d,.]+)/i);
-          if (lo) {
-            overview.myLosses = parseInt(lo[1].replace(/[,.]/g, ""));
-            overview.oppLosses = parseInt(lo[2].replace(/[,.]/g, ""));
-          } else {
-            overview.myLosses = 0;
-            overview.oppLosses = 0;
-          }
-          results.overview = overview;
-          setOcrStatus(prev => ({
-            ...prev,
-            overview: "done"
-          }));
-        } catch (e) {
-          setOcrStatus(prev => ({
-            ...prev,
-            overview: "error: " + e.message
-          }));
-        }
-      }
-
-      // ========== Screenshot 3: Stats (most important) ==========
-      if (ocrImages.stats) {
-        setOcrStatus(prev => ({
-          ...prev,
-          stats: "processing"
-        }));
-        try {
-          const text = await ocrImage(ocrImages.stats);
-          rawTexts.stats = text;
-          const lines = text.split("\n").map(function (l) {
-            return l.trim();
-          }).filter(Boolean);
-          const stats = {
-            myTroops: {
-              inf: 0,
-              cav: 0,
-              arch: 0
-            },
-            oppTroops: {
-              inf: 0,
-              cav: 0,
-              arch: 0
-            },
-            myStats: {},
-            oppStats: {}
-          };
-          const statLabels = [["Infantry Attack", "infAtk"], ["Infantry Defense", "infDef"], ["Infantry Lethality", "infLeth"], ["Infantry Health", "infHp"], ["Cavalry Attack", "cavAtk"], ["Cavalry Defense", "cavDef"], ["Cavalry Lethality", "cavLeth"], ["Cavalry Health", "cavHp"], ["Archer Attack", "archAtk"], ["Archer Defense", "archDef"], ["Archer Lethality", "archLeth"], ["Archer Health", "archHp"]];
-
-          // Find the first label line index
-          var firstLabelIdx = -1;
-          for (var li = 0; li < lines.length; li++) {
-            if (/infantry\s*attack/i.test(lines[li])) {
-              firstLabelIdx = li;
-              break;
-            }
-          }
-
-          // OPPONENT STATS: on the same line as the label, or next line
-          for (var si = 0; si < statLabels.length; si++) {
-            var label = statLabels[si][0],
-              key = statLabels[si][1];
-            for (var li2 = 0; li2 < lines.length; li2++) {
-              if (lines[li2].toLowerCase().replace(/\s/g, "").indexOf(label.toLowerCase().replace(/\s/g, "")) >= 0) {
-                var remaining = lines[li2].replace(new RegExp(label, "i"), "");
-                var checkText = remaining + " " + (lines[li2 + 1] || "");
-                var m = checkText.match(/(\d{3,4})[\s.](\d{1,2})/);
-                if (m) {
-                  stats.oppStats[key] = parseFloat(m[1] + "." + m[2]);
-                } else {
-                  var m2 = checkText.match(/(\d{3,4})/);
-                  if (m2 && parseFloat(m2[1]) > 100 && parseFloat(m2[1]) < 5000) stats.oppStats[key] = parseFloat(m2[1]);
-                }
-                break;
-              }
-            }
-          }
-
-          // MY STATS: lines before the first label, percentage-like numbers (skip troop counts with commas)
-          if (firstLabelIdx > 0) {
-            var myNums = [];
-            for (var pi = 0; pi < firstLabelIdx; pi++) {
-              var pLine = lines[pi];
-              // Skip lines with comma-separated troop counts
-              if (/\d{2,3},\d{3}/.test(pLine)) continue;
-              var cleaned = pLine.replace(/[%+\-"<>]/g, "").replace(/ATT/g, "").replace(/°/g, "").trim();
-              if (!/\d{3}/.test(cleaned)) continue;
-              // Match decimal numbers: "896.4" or "1191.276" or "1317.34"
-              var dm = cleaned.match(/(\d{3,4})[.\s](\d{1,3})/);
-              if (dm) {
-                var v = parseFloat(dm[1] + "." + dm[2]);
-                if (v > 100 && v < 3000) {
-                  myNums.push(v);
-                  continue;
-                }
-              }
-              // Match standalone 3-4 digit numbers
-              var sm = cleaned.match(/(\d{3,4})/);
-              if (sm) {
-                var sv = parseFloat(sm[1]);
-                if (sv > 100 && sv < 2000) myNums.push(sv);else if (sv > 2000 && sv < 20000) myNums.push(sv / 10); // missing decimal: 9619 → 961.9
-              }
-            }
-            var statKeys = statLabels.map(function (s) {
-              return s[1];
-            });
-            for (var ni = 0; ni < myNums.length && ni < statKeys.length; ni++) {
-              stats.myStats[statKeys[ni]] = myNums[ni];
-            }
-          }
-
-          // TROOP COUNTS: group by line, skip lines with stat symbols
-          var troopGroups = [];
-          for (var ti = 0; ti < lines.length; ti++) {
-            var tLine = lines[ti];
-            if (/infantry|cavalry|archer|attack|defense|lethality|health|stat|bonus|troop|power|comparison|ATT|fh|airoop/i.test(tLine)) continue;
-            if (/[%+\-"<>]/g.test(tLine)) continue;
-            var tn = tLine.match(/(\d{2,3})[,.](\d{3})/g) || [];
-            var lineNums = [];
-            for (var tni = 0; tni < tn.length; tni++) {
-              var tv = parseInt(tn[tni].replace(/[,.]/g, ""));
-              if (tv > 50000 && tv < 10000000) lineNums.push(tv);
-            }
-            if (lineNums.length > 0) troopGroups.push(lineNums);
-          }
-          // Kingshot layout: 3 rows × 2 columns → OCR reads as [2],[1],[2],[1] line groups
-          // Groups: [myInf,myCav], [oppInf], [myArch,oppCav], [oppArch]
-          if (troopGroups.length >= 4 && troopGroups[0].length >= 2) {
-            stats.myTroops = {
-              inf: troopGroups[0][0],
-              cav: troopGroups[0][1],
-              arch: troopGroups[2] ? troopGroups[2][0] : 0
-            };
-            stats.oppTroops = {
-              inf: troopGroups[1] ? troopGroups[1][0] : 0,
-              cav: troopGroups[2] ? troopGroups[2][1] : 0,
-              arch: troopGroups[3] ? troopGroups[3][0] : 0
-            };
-          } else {
-            // Fallback: flat array, first 3 mine, next 3 opp
-            var flatTroops = troopGroups.reduce(function (a, b) {
-              return a.concat(b);
-            }, []);
-            if (flatTroops.length >= 6) {
-              stats.myTroops = {
-                inf: flatTroops[0],
-                cav: flatTroops[1],
-                arch: flatTroops[2]
-              };
-              stats.oppTroops = {
-                inf: flatTroops[3],
-                cav: flatTroops[4],
-                arch: flatTroops[5]
-              };
-            }
-          }
-          results.stats = stats;
-          setOcrStatus(prev => ({
-            ...prev,
-            stats: "done"
-          }));
-        } catch (e) {
-          setOcrStatus(prev => ({
-            ...prev,
-            stats: "error: " + e.message
-          }));
-        }
-      }
-
-      // ========== Screenshot 2: Gear (raw text only) ==========
-      if (ocrImages.gear) {
-        setOcrStatus(prev => ({
-          ...prev,
-          gear: "processing"
-        }));
-        try {
-          const text = await ocrImage(ocrImages.gear);
-          rawTexts.gear = text;
-          results.gear = {
-            rawText: text
-          };
-          setOcrStatus(prev => ({
-            ...prev,
-            gear: "done"
-          }));
-        } catch (e) {
-          setOcrStatus(prev => ({
-            ...prev,
-            gear: "error: " + e.message
-          }));
-        }
-      }
-      await worker.terminate();
-    } catch (e) {
-      console.error("OCR error:", e);
-    }
-    setOcrResults(results);
-    setOcrRawText(rawTexts);
-    setOcrProcessing(false);
-  }, [ocrImages]);
-  const applyOcrToCompare = useCallback(() => {
-    if (!ocrResults) return;
-    const r = ocrResults;
-
-    // Apply stats (Screenshot 3)
-    if (r.stats) {
-      const s = r.stats;
-      setMyBR(prev => ({
-        ...prev,
-        inf: s.myTroops?.inf || prev.inf,
-        cav: s.myTroops?.cav || prev.cav,
-        arch: s.myTroops?.arch || prev.arch,
-        infAtk: s.myStats?.infAtk || prev.infAtk,
-        infDef: s.myStats?.infDef || prev.infDef,
-        infLeth: s.myStats?.infLeth || prev.infLeth,
-        infHp: s.myStats?.infHp || prev.infHp,
-        cavAtk: s.myStats?.cavAtk || prev.cavAtk,
-        cavDef: s.myStats?.cavDef || prev.cavDef,
-        cavLeth: s.myStats?.cavLeth || prev.cavLeth,
-        cavHp: s.myStats?.cavHp || prev.cavHp,
-        archAtk: s.myStats?.archAtk || prev.archAtk,
-        archDef: s.myStats?.archDef || prev.archDef,
-        archLeth: s.myStats?.archLeth || prev.archLeth,
-        archHp: s.myStats?.archHp || prev.archHp
-      }));
-      setOppBR(prev => ({
-        ...prev,
-        inf: s.oppTroops?.inf || prev.inf,
-        cav: s.oppTroops?.cav || prev.cav,
-        arch: s.oppTroops?.arch || prev.arch,
-        infAtk: s.oppStats?.infAtk || prev.infAtk,
-        infDef: s.oppStats?.infDef || prev.infDef,
-        infLeth: s.oppStats?.infLeth || prev.infLeth,
-        infHp: s.oppStats?.infHp || prev.infHp,
-        cavAtk: s.oppStats?.cavAtk || prev.cavAtk,
-        cavDef: s.oppStats?.cavDef || prev.cavDef,
-        cavLeth: s.oppStats?.cavLeth || prev.cavLeth,
-        cavHp: s.oppStats?.cavHp || prev.cavHp,
-        archAtk: s.oppStats?.archAtk || prev.archAtk,
-        archDef: s.oppStats?.archDef || prev.archDef,
-        archLeth: s.oppStats?.archLeth || prev.archLeth,
-        archHp: s.oppStats?.archHp || prev.archHp
-      }));
-    }
-    setTab("compare");
-  }, [ocrResults, setMyBR, setOppBR, setTab]);
-
-  // Cloud tab state
   const [sbConnected] = useState(!!sbClient);
   const [adminKey, setAdminKey] = useState('');
   const [cloudMsg, setCloudMsg] = useState('');
@@ -5148,414 +4818,7 @@ function App() {
         transition: "all 0.2s"
       }
     }, t.label);
-  })), tab === "ocr" && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "grid",
-      gap: 16,
-      marginTop: 16
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.card
-  }, /*#__PURE__*/React.createElement("h3", {
-    style: {
-      margin: "0 0 4px",
-      fontSize: 16,
-      fontWeight: 800,
-      color: C.accent
-    }
-  }, "\uD83D\uDCF8 Battle Report Scanner"), /*#__PURE__*/React.createElement("p", {
-    style: {
-      margin: "0 0 12px",
-      fontSize: 11,
-      color: C.textDim
-    }
-  }, "Upload screenshots from your in-game battle report. OCR auto-extracts troop counts and stat bonuses. Gear & Heroes uses a visual reference helper for manual entry."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.totalBox,
-      marginBottom: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginBottom: 6
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      fontWeight: 700,
-      color: C.text
-    }
-  }, "1. Battle Overview ", /*#__PURE__*/React.createElement("span", {
-    style: S.badge(C.green)
-  }, "AUTO-OCR")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: C.textDim
-    }
-  }, "Squad, Losses, Injured, Lightly Injured")), /*#__PURE__*/React.createElement("div", null, ocrStatus.overview === "ready" && /*#__PURE__*/React.createElement("span", {
-    style: S.badge(C.accent)
-  }, "READY"), ocrStatus.overview === "processing" && /*#__PURE__*/React.createElement("span", {
-    style: S.badge(C.accent)
-  }, "PROCESSING..."), ocrStatus.overview === "done" && /*#__PURE__*/React.createElement("span", {
-    style: S.badge(C.green)
-  }, "DONE \u2713"), ocrStatus.overview && String(ocrStatus.overview).startsWith("error") && /*#__PURE__*/React.createElement("span", {
-    style: S.badge(C.red)
-  }, "ERROR"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 8,
-      alignItems: "center"
-    }
-  }, /*#__PURE__*/React.createElement("label", {
-    style: {
-      padding: "8px 16px",
-      borderRadius: 6,
-      cursor: "pointer",
-      fontSize: 11,
-      fontWeight: 700,
-      fontFamily: C.fontDisplay,
-      background: C.green + "22",
-      color: C.green,
-      border: "1px solid " + C.green + "33"
-    }
-  }, "\uD83D\uDCF7 Choose Image", /*#__PURE__*/React.createElement("input", {
-    type: "file",
-    accept: "image/*",
-    style: {
-      display: "none"
-    },
-    onChange: e => handleOcrUpload("overview", e.target.files[0])
-  })), ocrPreviews.overview && /*#__PURE__*/React.createElement("img", {
-    src: ocrPreviews.overview,
-    alt: "Overview",
-    style: {
-      height: 60,
-      borderRadius: 6,
-      border: "1px solid " + C.panelBorder
-    }
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.totalBox,
-      marginBottom: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginBottom: 6
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      fontWeight: 700,
-      color: C.text
-    }
-  }, "2. Troop Power & Stats ", /*#__PURE__*/React.createElement("span", {
-    style: S.badge(C.green)
-  }, "AUTO-OCR")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: C.textDim
-    }
-  }, "Troop counts + all 12 Stat Bonuses \u2014 this is the most important screenshot")), /*#__PURE__*/React.createElement("div", null, ocrStatus.stats === "ready" && /*#__PURE__*/React.createElement("span", {
-    style: S.badge(C.accent)
-  }, "READY"), ocrStatus.stats === "processing" && /*#__PURE__*/React.createElement("span", {
-    style: S.badge(C.accent)
-  }, "PROCESSING..."), ocrStatus.stats === "done" && /*#__PURE__*/React.createElement("span", {
-    style: S.badge(C.green)
-  }, "DONE \u2713"), ocrStatus.stats && String(ocrStatus.stats).startsWith("error") && /*#__PURE__*/React.createElement("span", {
-    style: S.badge(C.red)
-  }, "ERROR"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 8,
-      alignItems: "center"
-    }
-  }, /*#__PURE__*/React.createElement("label", {
-    style: {
-      padding: "8px 16px",
-      borderRadius: 6,
-      cursor: "pointer",
-      fontSize: 11,
-      fontWeight: 700,
-      fontFamily: C.fontDisplay,
-      background: C.green + "22",
-      color: C.green,
-      border: "1px solid " + C.green + "33"
-    }
-  }, "\uD83D\uDCF7 Choose Image", /*#__PURE__*/React.createElement("input", {
-    type: "file",
-    accept: "image/*",
-    style: {
-      display: "none"
-    },
-    onChange: e => handleOcrUpload("stats", e.target.files[0])
-  })), ocrPreviews.stats && /*#__PURE__*/React.createElement("img", {
-    src: ocrPreviews.stats,
-    alt: "Stats",
-    style: {
-      height: 60,
-      borderRadius: 6,
-      border: "1px solid " + C.panelBorder
-    }
-  }))), /*#__PURE__*/React.createElement("button", {
-    onClick: processOcr,
-    disabled: ocrProcessing || !ocrImages.overview && !ocrImages.stats,
-    style: {
-      width: "100%",
-      padding: "12px 20px",
-      borderRadius: 8,
-      border: "none",
-      cursor: ocrProcessing ? "wait" : "pointer",
-      fontSize: 14,
-      fontWeight: 800,
-      fontFamily: C.fontDisplay,
-      letterSpacing: "0.02em",
-      background: ocrProcessing ? C.textMuted : "linear-gradient(135deg, " + C.accent + ", " + C.red + ")",
-      color: ocrProcessing ? C.textDim : "#000",
-      transition: "all 0.2s",
-      marginBottom: 16
-    }
-  }, ocrProcessing ? "⏳ Processing Screenshots..." : "🔍 Extract Data (OCR)"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.totalBox,
-      marginBottom: 10,
-      borderColor: C.accent + "44"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 6
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      fontWeight: 700,
-      color: C.text
-    }
-  }, "3. Gear & Heroes ", /*#__PURE__*/React.createElement("span", {
-    style: S.badge(C.accent)
-  }, "VISUAL REFERENCE")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: C.textDim
-    }
-  }, "Upload your screenshot below as a visual reference, then enter values on the Compare page. Game icons can't be reliably OCR'd.")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 8,
-      alignItems: "flex-start"
-    }
-  }, /*#__PURE__*/React.createElement("label", {
-    style: {
-      padding: "8px 16px",
-      borderRadius: 6,
-      cursor: "pointer",
-      fontSize: 11,
-      fontWeight: 700,
-      fontFamily: C.fontDisplay,
-      background: C.accent + "22",
-      color: C.accent,
-      border: "1px solid " + C.accent + "33",
-      flexShrink: 0
-    }
-  }, "\uD83D\uDCF7 Choose Image", /*#__PURE__*/React.createElement("input", {
-    type: "file",
-    accept: "image/*",
-    style: {
-      display: "none"
-    },
-    onChange: e => handleOcrUpload("gear", e.target.files[0])
-  }))), ocrPreviews.gear && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 10
-    }
-  }, /*#__PURE__*/React.createElement("img", {
-    src: ocrPreviews.gear,
-    alt: "Gear & Heroes",
-    style: {
-      width: "100%",
-      borderRadius: 8,
-      border: "1px solid " + C.panelBorder
-    }
-  })))), ocrResults && /*#__PURE__*/React.createElement("div", {
-    style: S.card
-  }, /*#__PURE__*/React.createElement("h3", {
-    style: {
-      margin: "0 0 8px",
-      fontSize: 14,
-      fontWeight: 800,
-      color: C.green
-    }
-  }, "\u2713 Extracted Data"), ocrResults.overview && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.sectionDivider
-  }, "BATTLE OVERVIEW"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "grid",
-      gridTemplateColumns: "1fr 1fr",
-      gap: 8,
-      marginTop: 6
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.totalBox
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.fieldLabel
-  }, "YOU"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: C.text,
-      fontFamily: C.fontMono
-    }
-  }, "Squad: ", (ocrResults.overview.mySquad || 0).toLocaleString(), /*#__PURE__*/React.createElement("br", null), "Injured: ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: C.red
-    }
-  }, (ocrResults.overview.myInjured || 0).toLocaleString()), /*#__PURE__*/React.createElement("br", null), "Lightly: ", (ocrResults.overview.myLightlyInjured || 0).toLocaleString())), /*#__PURE__*/React.createElement("div", {
-    style: S.totalBox
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.fieldLabel
-  }, "OPPONENT"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: C.text,
-      fontFamily: C.fontMono
-    }
-  }, "Squad: ", (ocrResults.overview.oppSquad || 0).toLocaleString(), /*#__PURE__*/React.createElement("br", null), "Injured: ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: C.red
-    }
-  }, (ocrResults.overview.oppInjured || 0).toLocaleString()), /*#__PURE__*/React.createElement("br", null), "Lightly: ", (ocrResults.overview.oppLightlyInjured || 0).toLocaleString())))), ocrResults.stats && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.sectionDivider
-  }, "TROOPS & STAT BONUSES"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "grid",
-      gridTemplateColumns: "1fr 1fr",
-      gap: 8,
-      marginTop: 6
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.totalBox
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.fieldLabel
-  }, "YOUR TROOPS"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: C.text,
-      fontFamily: C.fontMono
-    }
-  }, "INF: ", (ocrResults.stats.myTroops?.inf || 0).toLocaleString(), /*#__PURE__*/React.createElement("br", null), "CAV: ", (ocrResults.stats.myTroops?.cav || 0).toLocaleString(), /*#__PURE__*/React.createElement("br", null), "ARC: ", (ocrResults.stats.myTroops?.arch || 0).toLocaleString())), /*#__PURE__*/React.createElement("div", {
-    style: S.totalBox
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.fieldLabel
-  }, "OPPONENT TROOPS"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: C.text,
-      fontFamily: C.fontMono
-    }
-  }, "INF: ", (ocrResults.stats.oppTroops?.inf || 0).toLocaleString(), /*#__PURE__*/React.createElement("br", null), "CAV: ", (ocrResults.stats.oppTroops?.cav || 0).toLocaleString(), /*#__PURE__*/React.createElement("br", null), "ARC: ", (ocrResults.stats.oppTroops?.arch || 0).toLocaleString()))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 8
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      ...S.fieldLabel,
-      marginBottom: 4
-    }
-  }, "STAT BONUSES EXTRACTED"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "grid",
-      gridTemplateColumns: "1fr 1fr",
-      gap: 4
-    }
-  }, ["inf", "cav", "arch"].map(function (t) {
-    return ["Atk", "Def", "Leth", "Hp"].map(function (s) {
-      var myVal = ocrResults.stats.myStats?.[t + s] || 0;
-      var oppVal = ocrResults.stats.oppStats?.[t + s] || 0;
-      var label = (t === "inf" ? "INF" : t === "cav" ? "CAV" : "ARC") + " " + s.toUpperCase();
-      return React.createElement("div", {
-        key: t + s,
-        style: {
-          display: "flex",
-          justifyContent: "space-between",
-          fontSize: 10,
-          fontFamily: C.fontMono,
-          padding: "2px 6px",
-          borderRadius: 3,
-          background: C.bg
-        }
-      }, React.createElement("span", {
-        style: {
-          color: TROOP_COLORS[t]
-        }
-      }, label), React.createElement("span", null, React.createElement("span", {
-        style: {
-          color: C.green
-        }
-      }, "+" + myVal + "%"), " / ", React.createElement("span", {
-        style: {
-          color: C.red
-        }
-      }, "+" + oppVal + "%")));
-    });
-  })))), Object.keys(ocrRawText).length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.sectionDivider
-  }, "RAW OCR TEXT (DEBUG)"), Object.entries(ocrRawText).map(function (entry) {
-    return React.createElement("div", {
-      key: entry[0],
-      style: {
-        marginTop: 6
-      }
-    }, React.createElement("div", {
-      style: {
-        ...S.fieldLabel,
-        color: C.accent
-      }
-    }, entry[0].toUpperCase()), React.createElement("pre", {
-      style: {
-        padding: 8,
-        borderRadius: 6,
-        background: C.bg,
-        border: "1px solid " + C.panelBorder,
-        fontSize: 9,
-        color: C.textDim,
-        fontFamily: C.fontMono,
-        maxHeight: 150,
-        overflowY: "auto",
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-all"
-      }
-    }, entry[1]));
-  })), /*#__PURE__*/React.createElement("button", {
-    onClick: applyOcrToCompare,
-    style: {
-      width: "100%",
-      padding: "12px 20px",
-      borderRadius: 8,
-      border: "none",
-      cursor: "pointer",
-      fontSize: 14,
-      fontWeight: 800,
-      fontFamily: C.fontDisplay,
-      marginTop: 12,
-      background: "linear-gradient(135deg, " + C.green + ", " + C.blue + ")",
-      color: "#000"
-    }
-  }, "\u2713 Apply to Compare Page & View Results"))), tab === "compare" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  })), tab === "compare" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       gap: 20,
