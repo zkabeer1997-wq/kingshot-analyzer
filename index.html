@@ -4606,6 +4606,66 @@ function App() {
   const [joinerResults, setJoinerResults] = useState(null);
   const [formationResults, setFormationResults] = useState(null);
   const [showAllRecs, setShowAllRecs] = useState(false);
+
+  // Actual battle result — for calibrating the formula
+  const [actualResult, setActualResult] = useState({
+    outcome: "",
+    // "win", "loss", "draw"
+    myPowerLost: 0,
+    oppPowerLost: 0,
+    myInjuredInf: 0,
+    myInjuredCav: 0,
+    myInjuredArch: 0,
+    oppInjuredInf: 0,
+    oppInjuredCav: 0,
+    oppInjuredArch: 0,
+    myLightlyInf: 0,
+    myLightlyCav: 0,
+    myLightlyArch: 0,
+    oppLightlyInf: 0,
+    oppLightlyCav: 0,
+    oppLightlyArch: 0
+  });
+  const [actualSubmitted, setActualSubmitted] = useState(false);
+  const updActual = (k, v) => setActualResult(prev => ({
+    ...prev,
+    [k]: v
+  }));
+  const submitActualResult = useCallback(() => {
+    if (!actualResult.outcome) {
+      alert("Please select Win, Loss, or Draw first");
+      return;
+    }
+    const payload = {
+      governor_name: "User",
+      kingdom: "Auto",
+      // Predicted values
+      predicted_ratio: battleResult ? battleResult.ratio : null,
+      predicted_myDmg: battleResult ? battleResult.myDmg : null,
+      predicted_oppDmg: battleResult ? battleResult.oppDmg : null,
+      predicted_myInjured: battleResult ? battleResult.myTotalInjured : null,
+      predicted_oppInjured: battleResult ? battleResult.oppTotalInjured : null,
+      // Actual values
+      actual_outcome: actualResult.outcome,
+      actual_myPowerLost: actualResult.myPowerLost,
+      actual_oppPowerLost: actualResult.oppPowerLost,
+      actual_myInjuredInf: actualResult.myInjuredInf,
+      actual_myInjuredCav: actualResult.myInjuredCav,
+      actual_myInjuredArch: actualResult.myInjuredArch,
+      actual_oppInjuredInf: actualResult.oppInjuredInf,
+      actual_oppInjuredCav: actualResult.oppInjuredCav,
+      actual_oppInjuredArch: actualResult.oppInjuredArch,
+      // Input data snapshot
+      input_myBR: myBR,
+      input_oppBR: oppBR,
+      profile_type: "actual_result"
+    };
+    if (typeof sbInsert === "function") {
+      sbInsert("battle_reports", payload).then(res => {
+        if (res.ok) setActualSubmitted(true);
+      });
+    }
+  }, [actualResult, battleResult, myBR, oppBR]);
   const [sbConnected] = useState(!!sbClient);
   const [adminKey, setAdminKey] = useState('');
   const [cloudMsg, setCloudMsg] = useState('');
@@ -5200,7 +5260,192 @@ function App() {
       fontFamily: C.fontMono,
       color: battleResult.ratio >= 1 ? C.green : C.red
     }
-  }, battleResult.ratio >= 1 ? "✓ WINNING" : "✗ LOSING", " \u2014 ", battleResult.ratio.toFixed(3))))), tab === "recommend" && /*#__PURE__*/React.createElement("div", {
+  }, battleResult.ratio >= 1 ? "✓ WINNING" : "✗ LOSING", " \u2014 ", battleResult.ratio.toFixed(3))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.sectionDivider
+  }, "\uD83D\uDCDD ACTUAL BATTLE RESULT"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 10,
+      color: C.textDim,
+      marginTop: 6,
+      marginBottom: 10
+    }
+  }, "Enter the real outcome from your battle report. This data helps calibrate the formula for better accuracy over time."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 6,
+      marginBottom: 12
+    }
+  }, [["win", "✓ WIN", C.green], ["loss", "✗ LOSS", C.red], ["draw", "⚖ DRAW", C.accent]].map(function (opt) {
+    return React.createElement("button", {
+      key: opt[0],
+      onClick: function () {
+        updActual("outcome", opt[0]);
+      },
+      style: {
+        flex: 1,
+        padding: "10px 8px",
+        borderRadius: 6,
+        border: "1px solid " + (actualResult.outcome === opt[0] ? opt[2] : C.inputBorder),
+        cursor: "pointer",
+        fontSize: 13,
+        fontWeight: 800,
+        fontFamily: C.fontDisplay,
+        background: actualResult.outcome === opt[0] ? opt[2] + "22" : C.inputBg,
+        color: actualResult.outcome === opt[0] ? opt[2] : C.textDim
+      }
+    }, opt[1]);
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 12,
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.fieldLabel
+  }, "YOUR POWER LOST"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    value: actualResult.myPowerLost || "",
+    placeholder: "0",
+    onChange: function (e) {
+      updActual("myPowerLost", Number(e.target.value) || 0);
+    },
+    style: S.numIn
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.fieldLabel
+  }, "OPPONENT POWER LOST"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    value: actualResult.oppPowerLost || "",
+    placeholder: "0",
+    onChange: function (e) {
+      updActual("oppPowerLost", Number(e.target.value) || 0);
+    },
+    style: S.numIn
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 12,
+      flexWrap: "wrap",
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.totalBox,
+      flex: 1,
+      minWidth: 200
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.fieldLabel,
+      color: C.green,
+      marginBottom: 6
+    }
+  }, "YOUR ACTUAL INJURED"), [["inf", "⚔ Infantry"], ["cav", "🐴 Cavalry"], ["arch", "🏹 Archer"]].map(function (t) {
+    return React.createElement("div", {
+      key: t[0],
+      style: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 4
+      }
+    }, React.createElement("span", {
+      style: {
+        fontSize: 10,
+        color: TROOP_COLORS[t[0]],
+        fontWeight: 600
+      }
+    }, t[1]), React.createElement("input", {
+      type: "number",
+      value: actualResult["myInjured" + t[0].charAt(0).toUpperCase() + t[0].slice(1)] || "",
+      placeholder: "0",
+      onChange: function (e) {
+        updActual("myInjured" + t[0].charAt(0).toUpperCase() + t[0].slice(1), Number(e.target.value) || 0);
+      },
+      style: {
+        ...S.numIn,
+        width: 90
+      }
+    }));
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.totalBox,
+      flex: 1,
+      minWidth: 200
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.fieldLabel,
+      color: C.blue,
+      marginBottom: 6
+    }
+  }, "OPPONENT ACTUAL INJURED"), [["inf", "⚔ Infantry"], ["cav", "🐴 Cavalry"], ["arch", "🏹 Archer"]].map(function (t) {
+    return React.createElement("div", {
+      key: t[0],
+      style: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 4
+      }
+    }, React.createElement("span", {
+      style: {
+        fontSize: 10,
+        color: TROOP_COLORS[t[0]],
+        fontWeight: 600
+      }
+    }, t[1]), React.createElement("input", {
+      type: "number",
+      value: actualResult["oppInjured" + t[0].charAt(0).toUpperCase() + t[0].slice(1)] || "",
+      placeholder: "0",
+      onChange: function (e) {
+        updActual("oppInjured" + t[0].charAt(0).toUpperCase() + t[0].slice(1), Number(e.target.value) || 0);
+      },
+      style: {
+        ...S.numIn,
+        width: 90
+      }
+    }));
+  }))), !actualSubmitted ? /*#__PURE__*/React.createElement("button", {
+    onClick: submitActualResult,
+    style: {
+      width: "100%",
+      padding: "12px 20px",
+      borderRadius: 8,
+      border: "none",
+      cursor: "pointer",
+      fontSize: 13,
+      fontWeight: 800,
+      fontFamily: C.fontDisplay,
+      background: actualResult.outcome ? "linear-gradient(135deg, " + C.accent + ", " + C.green + ")" : C.inputBg,
+      color: actualResult.outcome ? "#000" : C.textDim
+    }
+  }, "\uD83D\uDCCA Submit Actual Result for Formula Calibration") : /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "center",
+      padding: "12px 20px",
+      borderRadius: 8,
+      background: C.green + "18",
+      border: "1px solid " + C.green + "33"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 13,
+      fontWeight: 800,
+      color: C.green
+    }
+  }, "\u2713 Submitted! Thank you \u2014 this data helps improve accuracy."))))), tab === "recommend" && /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gap: 12
