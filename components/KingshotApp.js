@@ -4132,10 +4132,10 @@ function optimizeJoiners(atk, def) {
 // Formation optimizer — sweeps infantry/cavalry/archer % splits
 function optimizeFormation(atk, def, total) {
   const results = [];
-  for (let inf = 1; inf <= 25; inf += 3) {
-    for (let cav = 5; cav <= 50; cav += 5) {
+  for (let inf = 1; inf <= 80; inf += 3) {
+    for (let cav = 1; cav <= 80; cav += 3) {
       const arch = 100 - inf - cav;
-      if (arch < 25) continue;
+      if (arch < 1) continue;
       const troops = {
         Infantry: Math.round(total * inf / 100),
         Cavalry: Math.round(total * cav / 100),
@@ -4156,7 +4156,7 @@ function optimizeFormation(atk, def, total) {
       });
     }
   }
-  results.sort((a, b) => b.atkDmg - a.atkDmg);
+  results.sort((a, b) => b.ratio - a.ratio);
   return results.slice(0, 8);
 }
 
@@ -5682,7 +5682,7 @@ function App() {
       color: "#818cf8",
       marginBottom: 6
     }
-  }, "Best Formation Splits (by damage output)"), /*#__PURE__*/React.createElement("div", {
+  }, "Best Formation Splits (by damage ratio)"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gap: 4
