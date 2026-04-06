@@ -4017,14 +4017,42 @@ function calcSkillMod(joinerHeroes, useEV, leaderHeroes) {
 }
 
 // Full battle calculation — exact port
+// Base troop stats per tier and TG level (from kingshotsimulator.com)
+// Format: { type: { tier: { tg: { atk, def, leth, hp } } } }
+var TROOP_BASE_STATS = {
+  inf: {
+    10: { 0:{atk:472,hp:1416}, 1:{atk:491,hp:1473}, 2:{atk:515,hp:1546}, 3:{atk:541,hp:1624}, 4:{atk:568,hp:1705}, 5:{atk:597,hp:1790} },
+    11: { 0:{atk:553,hp:1660}, 1:{atk:575,hp:1727}, 2:{atk:604,hp:1813}, 3:{atk:634,hp:1904}, 4:{atk:666,hp:1999}, 5:{atk:699,hp:2099} }
+  },
+  cav: {
+    10: { 0:{atk:1416,hp:472}, 1:{atk:1473,hp:491}, 2:{atk:1546,hp:515}, 3:{atk:1624,hp:541}, 4:{atk:1705,hp:568}, 5:{atk:1790,hp:597} },
+    11: { 0:{atk:1660,hp:553}, 1:{atk:1727,hp:575}, 2:{atk:1813,hp:604}, 3:{atk:1904,hp:634}, 4:{atk:1999,hp:666}, 5:{atk:2099,hp:699} }
+  },
+  arch: {
+    10: { 0:{atk:1888,hp:354}, 1:{atk:1964,hp:368}, 2:{atk:2062,hp:387}, 3:{atk:2165,hp:406}, 4:{atk:2273,hp:426}, 5:{atk:2387,hp:448} },
+    11: { 0:{atk:2213,hp:415}, 1:{atk:2302,hp:431}, 2:{atk:2417,hp:453}, 3:{atk:2538,hp:476}, 4:{atk:2665,hp:499}, 5:{atk:2798,hp:525} }
+  }
+};
+
+function getBaseStats(troopType, tier, tg) {
+  var tierNum = typeof tier === "string" ? parseInt(tier.replace("T","")) : tier;
+  var tgNum = typeof tg === "string" ? parseInt(tg.replace("TG","")) : (tg || 5);
+  var typeStats = TROOP_BASE_STATS[troopType];
+  if (!typeStats) return { atk: 597, hp: 1790 }; // fallback to inf T10 TG5
+  var tierStats = typeStats[tierNum] || typeStats[10];
+  return tierStats[tgNum] || tierStats[5] || { atk: 597, hp: 1790 };
+}
+
 function calcBattleFull(attacker, defender) {
-  // Use the same formula as simulateBattle but with SkillMod from hero joiners
+  // Battle formula using base troop stats from kingshotsimulator.com
+  // Damage = Troops × BaseAtk × (1 + AtkBonus%) × BaseLeth × (1 + LethBonus%)
+  //        / (BaseHP_enemy × (1 + HPBonus%) × BaseDef_enemy × (1 + DefBonus%))
+  //        × SkillMod
   var TROOP_MAP = { Infantry: "inf", Cavalry: "cav", Archer: "arch" };
   var troopAdvantage = { inf: "cav", cav: "arch", arch: "inf" };
 
   var atkTotal = (attacker.troops.Infantry || 0) + (attacker.troops.Cavalry || 0) + (attacker.troops.Archer || 0);
   var defTotal = (defender.troops.Infantry || 0) + (defender.troops.Cavalry || 0) + (defender.troops.Archer || 0);
-  var armyMin = Math.min(atkTotal, defTotal);
 
   var atkSM = calcSkillMod(attacker.joiners || [], true, attacker.leaders || []);
   var defSM = calcSkillMod(defender.joiners || [], true, defender.leaders || []);
@@ -4032,35 +4060,44 @@ function calcBattleFull(attacker, defender) {
   var atkDmg = 0, defDmg = 0;
 
   // Separate offensive and defensive skill components
-  // Offensive skills (DamageUp, OppDefenseDown) boost your own damage output
-  // Defensive skills (DefenseUp, OppDamageDown) reduce the opponent's damage to you
   var myOffense = atkSM.damageUp * atkSM.oppDefDown;
   var defDefense = defSM.oppDmgDown * defSM.defUp;
   var oppOffense = defSM.damageUp * defSM.oppDefDown;
   var atkDefense = atkSM.oppDmgDown * atkSM.defUp;
 
   UNIT_TYPES.forEach(function(T) {
-    var t = TROOP_MAP[T]; // "inf", "cav", "arch"
+    var t = TROOP_MAP[T];
     var myT = attacker.troops[T] || 0;
     var oppT = defender.troops[T] || 0;
 
-    // Get per-troop-type stats (same as simulateBattle)
-    var myAtk = 1 + ((attacker.stats && attacker.stats[t] ? attacker.stats[t].atk : attacker.atkBonus) || 0) / 100;
-    var myLeth = 1 + ((attacker.stats && attacker.stats[t] ? attacker.stats[t].leth : attacker.lethBonus) || 0) / 100;
-    var oppDef = 1 + ((defender.stats && defender.stats[t] ? defender.stats[t].def : defender.defBonus) || 0) / 100;
-    var oppHp = 1 + ((defender.stats && defender.stats[t] ? defender.stats[t].hp : defender.hpBonus) || 0) / 100;
+    // Get base stats for this troop type and tier/TG
+    var myTier = (attacker[t + "Tier"]) || "T10";
+    var myTg = (attacker[t + "Tg"]) != null ? attacker[t + "Tg"] : 5;
+    var oppTier = (defender[t + "Tier"]) || "T10";
+    var oppTg = (defender[t + "Tg"]) != null ? defender[t + "Tg"] : 5;
+    var myBase = getBaseStats(t, myTier, myTg);
+    var oppBase = getBaseStats(t, oppTier, oppTg);
 
-    var oppAtk = 1 + ((defender.stats && defender.stats[t] ? defender.stats[t].atk : defender.atkBonus) || 0) / 100;
-    var oppLeth = 1 + ((defender.stats && defender.stats[t] ? defender.stats[t].leth : defender.lethBonus) || 0) / 100;
-    var myDef = 1 + ((attacker.stats && attacker.stats[t] ? attacker.stats[t].def : attacker.defBonus) || 0) / 100;
-    var myHp = 1 + ((attacker.stats && attacker.stats[t] ? attacker.stats[t].hp : attacker.hpBonus) || 0) / 100;
+    // Stat bonuses from BR (percentage bonuses on top of base stats)
+    var myAtkBonus = ((attacker.stats && attacker.stats[t] ? attacker.stats[t].atk : attacker.atkBonus) || 0) / 100;
+    var myLethBonus = ((attacker.stats && attacker.stats[t] ? attacker.stats[t].leth : attacker.lethBonus) || 0) / 100;
+    var oppDefBonus = ((defender.stats && defender.stats[t] ? defender.stats[t].def : defender.defBonus) || 0) / 100;
+    var oppHpBonus = ((defender.stats && defender.stats[t] ? defender.stats[t].hp : defender.hpBonus) || 0) / 100;
 
-    // Daryl's formula: Kills = √(Troops × ArmyMin) × (ATK × Leth) / (Def × HP) × SkillMod
-    var myArmy = myT > 0 ? Math.sqrt(myT * armyMin) : 0;
-    var oppArmy = oppT > 0 ? Math.sqrt(oppT * armyMin) : 0;
+    var oppAtkBonus = ((defender.stats && defender.stats[t] ? defender.stats[t].atk : defender.atkBonus) || 0) / 100;
+    var oppLethBonus = ((defender.stats && defender.stats[t] ? defender.stats[t].leth : defender.lethBonus) || 0) / 100;
+    var myDefBonus = ((attacker.stats && attacker.stats[t] ? attacker.stats[t].def : attacker.defBonus) || 0) / 100;
+    var myHpBonus = ((attacker.stats && attacker.stats[t] ? attacker.stats[t].hp : attacker.hpBonus) || 0) / 100;
 
-    var myDmgT = myArmy > 0 ? myArmy * (myAtk * myLeth) / ((oppDef * oppHp) || 1) * myOffense / (defDefense || 1) : 0;
-    var oppDmgT = oppArmy > 0 ? oppArmy * (oppAtk * oppLeth) / ((myDef * myHp) || 1) * oppOffense / (atkDefense || 1) : 0;
+    // Damage = Troops × BaseAtk × (1+AtkBonus) × (1+LethBonus)
+    //        / (BaseHP_enemy × (1+HPBonus) × (1+DefBonus))
+    var myDmgT = myT > 0 ? myT * myBase.atk * (1 + myAtkBonus) * (1 + myLethBonus)
+      / ((oppBase.hp * (1 + oppHpBonus) * (1 + oppDefBonus)) || 1)
+      * myOffense / (defDefense || 1) : 0;
+
+    var oppDmgT = oppT > 0 ? oppT * oppBase.atk * (1 + oppAtkBonus) * (1 + oppLethBonus)
+      / ((myBase.hp * (1 + myHpBonus) * (1 + myDefBonus)) || 1)
+      * oppOffense / (atkDefense || 1) : 0;
 
     // Troop advantage: +10% proportional to how much of the enemy is the weak type
     var weakType = troopAdvantage[t];
@@ -4629,7 +4666,9 @@ function App() {
       arch: { atk: myBR.archAtk || 0, leth: myBR.archLeth || 0, def: myBR.archDef || 0, hp: myBR.archHp || 0 }
     },
     leaders: (myBR.leaders || []).filter(Boolean),
-    joiners: (myBR.joiners || []).filter(Boolean)
+    joiners: (myBR.joiners || []).filter(Boolean),
+    infTier: myBR.infTier || "T10", cavTier: myBR.cavTier || "T10", archTier: myBR.archTier || "T10",
+    infTg: myBR.infTg != null ? myBR.infTg : 5, cavTg: myBR.cavTg != null ? myBR.cavTg : 5, archTg: myBR.archTg != null ? myBR.archTg : 5
   }), [myBR]);
   const fullBattleDef = useMemo(() => ({
     troops: {
@@ -4643,7 +4682,9 @@ function App() {
       arch: { atk: oppBR.archAtk || 0, leth: oppBR.archLeth || 0, def: oppBR.archDef || 0, hp: oppBR.archHp || 0 }
     },
     leaders: (oppBR.leaders || []).filter(Boolean),
-    joiners: (oppBR.joiners || []).filter(Boolean)
+    joiners: (oppBR.joiners || []).filter(Boolean),
+    infTier: oppBR.infTier || "T10", cavTier: oppBR.cavTier || "T10", archTier: oppBR.archTier || "T10",
+    infTg: oppBR.infTg != null ? oppBR.infTg : 5, cavTg: oppBR.cavTg != null ? oppBR.cavTg : 5, archTg: oppBR.archTg != null ? oppBR.archTg : 5
   }), [oppBR]);
 
   // Full battle result with heroes/skills
