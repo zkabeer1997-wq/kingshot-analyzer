@@ -4050,7 +4050,7 @@ function calcBattleFull(attacker, defender) {
   // 20% of cavalry bypass frontline to dive enemy archers
   var ADVANTAGE = { inf: "cav", cav: "arch", arch: "inf" };
   var CAV_DIVE = 0.20;
-  var MAX_ROUNDS = 50;
+  var MAX_ROUNDS = 200;
 
   // Compute skill mods once
   var atkSM = calcSkillMod(attacker.joiners || [], true, attacker.leaders || []);
@@ -4069,12 +4069,23 @@ function calcBattleFull(attacker, defender) {
     var dBase = getBaseStats(T, defender[T + "Tier"] || "T10", defender[T + "Tg"] != null ? defender[T + "Tg"] : 5);
     var aS = (attacker.stats && attacker.stats[T]) || {};
     var dS = (defender.stats && defender.stats[T]) || {};
-    // Damage per troop per round = baseAtk * (1+atk%) * (1+leth%)
-    aDpt[T] = aBase.atk * (1 + (aS.atk || 0) / 100) * (1 + (aS.leth || 0) / 100);
-    dDpt[T] = dBase.atk * (1 + (dS.atk || 0) / 100) * (1 + (dS.leth || 0) / 100);
-    // Effective HP per troop = baseHp * (1+hp%) * (1+def%)
-    aEhp[T] = aBase.hp * (1 + (aS.hp || 0) / 100) * (1 + (aS.def || 0) / 100);
-    dEhp[T] = dBase.hp * (1 + (dS.hp || 0) / 100) * (1 + (dS.def || 0) / 100);
+    // Kingshot damage formula (from kingshotguides.com bear trap mechanics):
+    // damage = base_atk * (1+atk%) * base_leth * (1+leth%) / 100
+    // defense = base_def * (1+def%) / 100 * base_hp * (1+hp%)
+    // kills = sqrt(troops) * damage / defense
+    var aAtk = aBase.atk * (1 + (aS.atk || 0) / 100);
+    var aLeth = 10 * (1 + (aS.leth || 0) / 100) / 100; // leth as multiplier /100
+    var dAtk = dBase.atk * (1 + (dS.atk || 0) / 100);
+    var dLeth = 10 * (1 + (dS.leth || 0) / 100) / 100;
+    aDpt[T] = aAtk * aLeth;  // damage per troop
+    dDpt[T] = dAtk * dLeth;
+    // Defense: base_def*(1+def%)/100 acts as damage reduction, HP is pool
+    var aDef = 10 * (1 + (aS.def || 0) / 100) / 100;
+    var aHp = aBase.hp * (1 + (aS.hp || 0) / 100);
+    var dDef = 10 * (1 + (dS.def || 0) / 100) / 100;
+    var dHp = dBase.hp * (1 + (dS.hp || 0) / 100);
+    aEhp[T] = aDef * aHp;  // effective HP per troop
+    dEhp[T] = dDef * dHp;
   }
 
   // Mutable troop counts (fractional to avoid rounding error)
@@ -4088,9 +4099,10 @@ function calcBattleFull(attacker, defender) {
   var totalAtkDmg = 0, totalDefDmg = 0;
 
   // Helper: kills from count troops of atkType against targetType
+  // Uses sqrt(count) for diminishing returns on troop numbers
   var calcKills = function(count, dpt, targetEhp, atkType, targetType, offMod, defMod) {
     if (count <= 0) return 0;
-    var dmg = count * dpt * offMod / (defMod || 1);
+    var dmg = Math.sqrt(count) * dpt * offMod / (defMod || 1);
     if (ADVANTAGE[atkType] === targetType) dmg *= 1.10;
     return dmg / (targetEhp || 1);
   };
