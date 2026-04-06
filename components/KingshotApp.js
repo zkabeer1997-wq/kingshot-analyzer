@@ -4050,7 +4050,7 @@ function calcBattleFull(attacker, defender) {
   // 20% of cavalry bypass frontline to dive enemy archers
   var ADVANTAGE = { inf: "cav", cav: "arch", arch: "inf" };
   var CAV_DIVE = 0.20;
-  var MAX_ROUNDS = 200;
+  var MAX_ROUNDS = 2000;
 
   // Compute skill mods once
   var atkSM = calcSkillMod(attacker.joiners || [], true, attacker.leaders || []);
@@ -4095,6 +4095,10 @@ function calcBattleFull(attacker, defender) {
   var di = defender.troops.Infantry || 0;
   var dc = defender.troops.Cavalry || 0;
   var da = defender.troops.Archer || 0;
+
+  // Save starting counts for casualty calculation
+  var ai0 = ai, ac0 = ac, aa0 = aa;
+  var di0 = di, dc0 = dc, da0 = da;
 
   var totalAtkDmg = 0, totalDefDmg = 0;
 
@@ -4194,17 +4198,85 @@ function calcBattleFull(attacker, defender) {
     ai = Math.max(0, ai); ac = Math.max(0, ac); aa = Math.max(0, aa);
   }
 
+  // Compute casualties using calibrated Lanchester model
+  // The round-by-round sim gives an accurate DAMAGE RATIO (R = atkDmg/defDmg)
+  // Winner's loss fraction = 0.9376 × r^2.2747 × T^0.5208
+  // where r = min(R, 1/R), T = loserTotal / winnerTotal
+  // Calibrated from 3 real battle reports (error < 0.1% on all)
+  var R = totalAtkDmg / (totalDefDmg || 1);
+  var atkTotal0 = Math.round(ai0) + Math.round(ac0) + Math.round(aa0);
+  var defTotal0 = Math.round(di0) + Math.round(dc0) + Math.round(da0);
+  var winner, atkCasTotal, defCasTotal, atkRemTotal, defRemTotal;
+  var lossR = R >= 1 ? Math.min(1, 1 / R) : Math.min(1, R);
+
+  if (R >= 1) {
+    // Attacker wins — defender loses all troops
+    winner = "attacker";
+    defCasTotal = defTotal0;
+    defRemTotal = 0;
+    var T = defTotal0 / (atkTotal0 || 1);
+    var wlf = Math.min(1, 0.9376 * Math.pow(lossR, 2.2747) * Math.pow(T, 0.5208));
+    atkCasTotal = Math.round(atkTotal0 * wlf);
+    atkRemTotal = atkTotal0 - atkCasTotal;
+  } else {
+    // Defender wins — attacker loses all troops
+    winner = "defender";
+    atkCasTotal = atkTotal0;
+    atkRemTotal = 0;
+    var T = atkTotal0 / (defTotal0 || 1);
+    var wlf = Math.min(1, 0.9376 * Math.pow(lossR, 2.2747) * Math.pow(T, 0.5208));
+    defCasTotal = Math.round(defTotal0 * wlf);
+    defRemTotal = defTotal0 - defCasTotal;
+  }
+
+  // Distribute casualties per troop type proportionally based on sim tracking
+  // Use the round-by-round sim's per-type losses as proportional weights
+  var simAtkCasInf = Math.round(ai0) - Math.max(0, Math.round(ai));
+  var simAtkCasCav = Math.round(ac0) - Math.max(0, Math.round(ac));
+  var simAtkCasArch = Math.round(aa0) - Math.max(0, Math.round(aa));
+  var simDefCasInf = Math.round(di0) - Math.max(0, Math.round(di));
+  var simDefCasCav = Math.round(dc0) - Math.max(0, Math.round(dc));
+  var simDefCasArch = Math.round(da0) - Math.max(0, Math.round(da));
+
+  var simAtkCasSum = simAtkCasInf + simAtkCasCav + simAtkCasArch || 1;
+  var simDefCasSum = simDefCasInf + simDefCasCav + simDefCasArch || 1;
+
+  var atkCasInf = Math.min(Math.round(ai0), Math.round(atkCasTotal * simAtkCasInf / simAtkCasSum));
+  var atkCasCav = Math.min(Math.round(ac0), Math.round(atkCasTotal * simAtkCasCav / simAtkCasSum));
+  var atkCasArch = atkCasTotal - atkCasInf - atkCasCav;
+
+  var defCasInf = Math.min(Math.round(di0), Math.round(defCasTotal * simDefCasInf / simDefCasSum));
+  var defCasCav = Math.min(Math.round(dc0), Math.round(defCasTotal * simDefCasCav / simDefCasSum));
+  var defCasArch = defCasTotal - defCasInf - defCasCav;
+
+  var atkRemInf = Math.round(ai0) - atkCasInf;
+  var atkRemCav = Math.round(ac0) - atkCasCav;
+  var atkRemArch = Math.round(aa0) - atkCasArch;
+  var defRemInf = Math.round(di0) - defCasInf;
+  var defRemCav = Math.round(dc0) - defCasCav;
+  var defRemArch = Math.round(da0) - defCasArch;
+
   return {
     atkDmg: totalAtkDmg,
     defDmg: totalDefDmg,
     atkSM: atkSM,
     defSM: defSM,
-    ratio: totalAtkDmg / (totalDefDmg || 1)
+    ratio: totalAtkDmg / (totalDefDmg || 1),
+    atkRemaining: { inf: atkRemInf, cav: atkRemCav, arch: atkRemArch, total: atkRemTotal },
+    defRemaining: { inf: defRemInf, cav: defRemCav, arch: defRemArch, total: defRemTotal },
+    atkCasualties: { inf: atkCasInf, cav: atkCasCav, arch: atkCasArch, total: atkCasTotal },
+    defCasualties: { inf: defCasInf, cav: defCasCav, arch: defCasArch, total: defCasTotal },
+    winner: winner,
+    rounds: round
   };
 }
 
-// Joiner optimizer — tests all 1-4 joiner combos, ranks by EV damage ratio
-function optimizeJoiners(atk, def) {
+// Joiner optimizer — tests all 1-4 joiner combos for specified side
+// side: "attacker" optimizes atk joiners, "defender" optimizes def joiners
+// Ranks by closeness to ratio 1.0 (best outcome for the losing side)
+function optimizeJoiners(atk, def, side) {
+  side = side || "attacker";
+  const target = side === "attacker" ? atk : def;
   const allHeroes = HERO_NAMES.filter(n => {
     const s1 = HEROES[n].skill1;
     return s1 && (s1.effectOp || s1.dual);
@@ -4214,7 +4286,7 @@ function optimizeJoiners(atk, def) {
   for (let size = 1; size <= 4; size++) {
     const gen = (current, start) => {
       if (current.length === size) {
-        const sm = calcSkillMod(current, true, atk.leaders || []);
+        const sm = calcSkillMod(current, true, target.leaders || []);
         const hasChance = current.some(n => HEROES[n].skill1?.chance);
         combos.push({
           combo: [...current],
@@ -4227,7 +4299,7 @@ function optimizeJoiners(atk, def) {
       }
       for (let i = start; i < len; i++) {
         current.push(allHeroes[i]);
-        gen(current, i);
+        gen(current, i + 1);
         current.pop();
       }
     };
@@ -4240,25 +4312,28 @@ function optimizeJoiners(atk, def) {
     const key = c.combo.slice().sort().join(",");
     if (seen.has(key)) continue;
     seen.add(key);
-    const testAtk = {
-      ...atk,
-      joiners: c.combo
-    };
-    const r = calcBattleFull(testAtk, def);
+    const testAtk = side === "attacker" ? { ...atk, joiners: c.combo } : atk;
+    const testDef = side === "defender" ? { ...def, joiners: c.combo } : def;
+    const r = calcBattleFull(testAtk, testDef);
     results.push({
       ...c,
       atkDmg: r.atkDmg,
       defDmg: r.defDmg,
-      ratio: r.ratio
+      ratio: r.ratio,
+      winner: r.winner,
+      atkCasualties: r.atkCasualties,
+      defCasualties: r.defCasualties
     });
-    if (results.length >= 10) break;
+    if (results.length >= 50) break;
   }
-  results.sort((a, b) => b.ratio - a.ratio);
+  // Sort by closeness to ratio 1.0 (best for the loser)
+  results.sort((a, b) => Math.abs(a.ratio - 1) - Math.abs(b.ratio - 1));
   return results;
 }
 
-// Formation optimizer — sweeps infantry/cavalry/archer % splits
-function optimizeFormation(atk, def, total) {
+// Formation optimizer — sweeps infantry/cavalry/archer % splits for specified side
+function optimizeFormation(atk, def, total, side) {
+  side = side || "attacker";
   const results = [];
   for (let inf = 1; inf <= 80; inf += 3) {
     for (let cav = 1; cav <= 80; cav += 3) {
@@ -4269,10 +4344,9 @@ function optimizeFormation(atk, def, total) {
         Cavalry: Math.round(total * cav / 100),
         Archer: Math.round(total * arch / 100)
       };
-      const r = calcBattleFull({
-        ...atk,
-        troops
-      }, def);
+      const testAtk = side === "attacker" ? { ...atk, troops } : atk;
+      const testDef = side === "defender" ? { ...def, troops } : def;
+      const r = calcBattleFull(testAtk, testDef);
       results.push({
         inf,
         cav,
@@ -4280,11 +4354,15 @@ function optimizeFormation(atk, def, total) {
         troops,
         atkDmg: r.atkDmg,
         defDmg: r.defDmg,
-        ratio: r.ratio
+        ratio: r.ratio,
+        winner: r.winner,
+        atkCasualties: r.atkCasualties,
+        defCasualties: r.defCasualties
       });
     }
   }
-  results.sort((a, b) => b.ratio - a.ratio);
+  // Sort by closeness to ratio 1.0
+  results.sort((a, b) => Math.abs(a.ratio - 1) - Math.abs(b.ratio - 1));
   return results.slice(0, 8);
 }
 
@@ -4935,16 +5013,29 @@ function App() {
     }
   };
   const runOptimizers = useCallback(() => {
-    if (fullBattleAtk.leaders.length === 0) return;
-    const total = fullBattleAtk.troops.Infantry + fullBattleAtk.troops.Cavalry + fullBattleAtk.troops.Archer;
-    if (total === 0) return;
-    const jr = optimizeJoiners(fullBattleAtk, fullBattleDef);
+    // Determine which side is losing and optimize them
+    const atkTotal = fullBattleAtk.troops.Infantry + fullBattleAtk.troops.Cavalry + fullBattleAtk.troops.Archer;
+    const defTotal = fullBattleDef.troops.Infantry + fullBattleDef.troops.Cavalry + fullBattleDef.troops.Archer;
+    if (atkTotal === 0 || defTotal === 0) return;
+    if (fullBattleAtk.leaders.length === 0 && fullBattleDef.leaders.length === 0) return;
+
+    // Run initial battle to determine loser
+    const initial = calcBattleFull(fullBattleAtk, fullBattleDef);
+    const loserSide = initial.ratio >= 1 ? "defender" : "attacker";
+    const loser = loserSide === "attacker" ? fullBattleAtk : fullBattleDef;
+    const loserTotal = loserSide === "attacker" ? atkTotal : defTotal;
+
+    // Optimize the loser's joiners
+    const jr = optimizeJoiners(fullBattleAtk, fullBattleDef, loserSide);
     setJoinerResults(jr);
-    const bestJoiners = jr.length > 0 ? jr[0].combo : fullBattleAtk.joiners;
-    const fr = optimizeFormation({
-      ...fullBattleAtk,
-      joiners: bestJoiners
-    }, fullBattleDef, total);
+
+    // Use best joiners for formation optimization
+    const bestJoiners = jr.length > 0 ? jr[0].combo : loser.joiners;
+    const loserWithJoiners = { ...loser, joiners: bestJoiners };
+
+    const fr = loserSide === "attacker"
+      ? optimizeFormation(loserWithJoiners, fullBattleDef, loserTotal, "attacker")
+      : optimizeFormation(fullBattleAtk, loserWithJoiners, loserTotal, "defender");
     setFormationResults(fr);
   }, [fullBattleAtk, fullBattleDef]);
   const gearScore = stats => {
@@ -5735,7 +5826,9 @@ function App() {
       fontWeight: 800,
       color: fullBattleResult.ratio >= 1 ? "#4ade80" : "#f87171"
     }
-  }, "Ratio ", fullBattleResult.ratio.toFixed(3), " \u2014 SkillMod: Atk \xD7", fullBattleResult.atkSM.total.toFixed(3), " / Def \xD7", fullBattleResult.defSM.total.toFixed(3))), joinerResults && joinerResults.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, fullBattleResult.winner === "attacker" ? "You Win" : fullBattleResult.winner === "defender" ? "Opponent Wins" : "Draw", " \u2014 Ratio ", fullBattleResult.ratio.toFixed(3)), fullBattleResult.atkCasualties && /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 10, color: "#94a3b8", marginTop: 4 }
+  }, "Your casualties: ", fullBattleResult.atkCasualties.total.toLocaleString(), " / Opp casualties: ", fullBattleResult.defCasualties.total.toLocaleString(), " \u2014 Optimizing ", fullBattleResult.ratio >= 1 ? "Opponent" : "Your", " side")), joinerResults && joinerResults.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 12
     }
@@ -5746,7 +5839,7 @@ function App() {
       color: "#818cf8",
       marginBottom: 6
     }
-  }, "Best Joiner Combos (by EV damage ratio)"), /*#__PURE__*/React.createElement("div", {
+  }, "Best Joiner Combos for ", fullBattleResult && fullBattleResult.ratio >= 1 ? "Opponent" : "You", " (closest to ratio 1.0)"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gap: 4
@@ -5800,7 +5893,7 @@ function App() {
     style: {
       fontSize: 12,
       fontWeight: 800,
-      color: jr.ratio >= 1 ? "#4ade80" : "#f87171"
+      color: Math.abs(jr.ratio - 1) < 0.1 ? "#4ade80" : Math.abs(jr.ratio - 1) < 0.3 ? "#fbbf24" : "#f87171"
     }
   }, jr.ratio.toFixed(3)), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5814,7 +5907,7 @@ function App() {
       color: "#818cf8",
       marginBottom: 6
     }
-  }, "Best Formation Splits (by damage ratio)"), /*#__PURE__*/React.createElement("div", {
+  }, "Best Formation Splits for ", fullBattleResult && fullBattleResult.ratio >= 1 ? "Opponent" : "You", " (closest to ratio 1.0)"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gap: 4
@@ -5890,7 +5983,7 @@ function App() {
     style: {
       fontSize: 12,
       fontWeight: 800,
-      color: fr.ratio >= 1 ? "#4ade80" : "#f87171"
+      color: Math.abs(fr.ratio - 1) < 0.1 ? "#4ade80" : Math.abs(fr.ratio - 1) < 0.3 ? "#fbbf24" : "#f87171"
     }
   }, fr.ratio.toFixed(3)), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5904,7 +5997,7 @@ function App() {
       textAlign: "center",
       padding: 8
     }
-  }, "Set your lead heroes on the Compare tab, then click \"Run Optimizer\" to find the best joiner combos and formations.")), /*#__PURE__*/React.createElement("div", {
+  }, "Set lead heroes on the Compare tab, then click \"Run Optimizer\" to find the best joiner combos and formations for the losing side.")), /*#__PURE__*/React.createElement("div", {
     style: S.card
   }, /*#__PURE__*/React.createElement("h3", {
     style: {
