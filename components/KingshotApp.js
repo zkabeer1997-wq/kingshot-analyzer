@@ -4332,18 +4332,22 @@ function optimizeJoiners(atk, def, side) {
 }
 
 // Formation optimizer — sweeps infantry/cavalry/archer % splits for specified side
-// Constrained to realistic formations: each troop type must be at least MIN_PCT
-// (prevents the optimizer from finding "loophole" extreme formations that exploit
-// the calibrated Lanchester formula but don't generalize to real-world battles)
+// Constrained to realistic, infantry-prioritized formations:
+//   Infantry: 33-80% (frontline must be substantial)
+//   Cavalry:  2-60%
+//   Archer:   2-60%
+// Prevents the optimizer from finding "loophole" extreme formations that
+// exploit the calibrated Lanchester formula but don't generalize to real battles
 function optimizeFormation(atk, def, total, side) {
   side = side || "attacker";
-  const MIN_PCT = 15; // each troop type must be at least 15% of total
-  const MAX_PCT = 70; // and no more than 70% of total
+  const INF_MIN = 33, INF_MAX = 80;
+  const CAV_MIN = 2,  CAV_MAX = 60;
+  const ARC_MIN = 2,  ARC_MAX = 60;
   const results = [];
-  for (let inf = MIN_PCT; inf <= MAX_PCT; inf += 3) {
-    for (let cav = MIN_PCT; cav <= MAX_PCT; cav += 3) {
+  for (let inf = INF_MIN; inf <= INF_MAX; inf += 3) {
+    for (let cav = CAV_MIN; cav <= CAV_MAX; cav += 3) {
       const arch = 100 - inf - cav;
-      if (arch < MIN_PCT || arch > MAX_PCT) continue;
+      if (arch < ARC_MIN || arch > ARC_MAX) continue;
       const troops = {
         Infantry: Math.round(total * inf / 100),
         Cavalry: Math.round(total * cav / 100),
