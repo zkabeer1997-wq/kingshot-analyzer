@@ -6277,7 +6277,7 @@ function App() {
         fontWeight: 700,
       }
     }, formationVerify[i] && formationVerify[i].status === "loading" ? "..." : formationVerify[i] && formationVerify[i].status === "done" ? "↻" : "Verify")
-  )))))), !joinerResults && /*#__PURE__*/React.createElement("p", {
+  ))))), !joinerResults && /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: 10,
       color: "#64748b",
