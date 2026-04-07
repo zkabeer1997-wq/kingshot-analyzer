@@ -4034,6 +4034,174 @@ var TROOP_BASE_STATS = {
   }
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// kingshotsimulator.com API integration
+// Calls our Vercel proxy at /api/battle-sim which forwards to
+// api.panel.kingshotsimulator.com — provides 99% accurate simulation
+// matching their canonical model.
+// ──────────────────────────────────────────────────────────────────────
+
+// In-memory cache for API simulation results, keyed by request hash
+var __apiSimCache = new Map();
+var __API_CACHE_MAX = 200;
+
+function _hashApiPayload(payload) {
+  // Stable JSON hash (skip num_sims to dedupe across sim counts)
+  var clone = JSON.parse(JSON.stringify(payload));
+  delete clone.num_sims;
+  return JSON.stringify(clone);
+}
+
+// Convert kingshot-analyzer's BR object → kingshotsimulator API payload format
+function brToApiSide(br, name) {
+  // BR has: inf, cav, arch (counts), {type}Atk/Def/Leth/Hp (stats), {type}Tier, {type}Tg, leaders, joiners
+  var typeMap = { inf: "inf", cav: "lanc", arch: "mark" };
+  var heroTypeMap = { Inf: "inf", Cav: "lanc", Arch: "mark" };
+
+  function tier(t) { return typeof t === "string" ? parseInt(t.replace("T","")) : (t || 10); }
+  function tg(g) { return typeof g === "string" ? parseInt(g.replace("TG","")) : (g != null ? g : 5); }
+
+  var stats = {
+    inf:  { attack: br.infAtk || 0,  defense: br.infDef || 0,  lethality: br.infLeth || 0,  health: br.infHp || 0 },
+    lanc: { attack: br.cavAtk || 0,  defense: br.cavDef || 0,  lethality: br.cavLeth || 0,  health: br.cavHp || 0 },
+    mark: { attack: br.archAtk || 0, defense: br.archDef || 0, lethality: br.archLeth || 0, health: br.archHp || 0 },
+  };
+
+  var troops = [];
+  if (br.inf > 0)  troops.push({ type: "inf",  tier: tier(br.infTier),  fc_level: tg(br.infTg),  quantity: br.inf  });
+  if (br.cav > 0)  troops.push({ type: "lanc", tier: tier(br.cavTier),  fc_level: tg(br.cavTg),  quantity: br.cav  });
+  if (br.arch > 0) troops.push({ type: "mark", tier: tier(br.archTier), fc_level: tg(br.archTg), quantity: br.arch });
+
+  function makeHero(heroName) {
+    if (!heroName || !HEROES[heroName]) return null;
+    var h = HEROES[heroName];
+    return {
+      name: heroName,
+      type: heroTypeMap[h.cls] || "inf",
+      stats: { attack: 0, defense: 0, lethality: 0, health: 0 },
+      skill_levels: { "1": 5, "2": 5, "3": 5 },
+      widget_level: 0,
+    };
+  }
+
+  var heroes = (br.leaders || []).filter(Boolean).map(makeHero).filter(Boolean);
+  var joiners = (br.joiners || []).filter(Boolean).map(makeHero).filter(Boolean);
+
+  return {
+    name: name,
+    stats: stats,
+    troops: troops,
+    heroes: heroes,
+    joiners: joiners,
+    stats_include_heroes: false,
+  };
+}
+
+// Call the proxy and return a normalized result matching the calcBattleFull shape
+async function fetchBattleSimulation(myBR, oppBR, numSims) {
+  numSims = numSims || 20;
+  var payload = {
+    attacker: brToApiSide(myBR, "attacker"),
+    defender: brToApiSide(oppBR, "defender"),
+    num_sims: numSims,
+  };
+
+  var key = _hashApiPayload(payload);
+  if (__apiSimCache.has(key)) return __apiSimCache.get(key);
+
+  var resp = await fetch("/api/battle-sim", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    var errBody = await resp.json().catch(function () { return { error: "HTTP " + resp.status }; });
+    throw new Error(errBody.error || "Simulation failed");
+  }
+  var data = await resp.json();
+  var sr = data.result && data.result.battle_report && data.result.battle_report.sim_result;
+  if (!sr) throw new Error("No sim_result in response");
+
+  // Normalize to the calcBattleFull return shape so existing UI code works
+  var atkInf = (sr.avg_unit_details && sr.avg_unit_details.attacker && sr.avg_unit_details.attacker.inf) || { initial_count: 0, avg_survived: 0 };
+  var atkLanc = (sr.avg_unit_details && sr.avg_unit_details.attacker && sr.avg_unit_details.attacker.lanc) || { initial_count: 0, avg_survived: 0 };
+  var atkMark = (sr.avg_unit_details && sr.avg_unit_details.attacker && sr.avg_unit_details.attacker.mark) || { initial_count: 0, avg_survived: 0 };
+  var defInf = (sr.avg_unit_details && sr.avg_unit_details.defender && sr.avg_unit_details.defender.inf) || { initial_count: 0, avg_survived: 0 };
+  var defLanc = (sr.avg_unit_details && sr.avg_unit_details.defender && sr.avg_unit_details.defender.lanc) || { initial_count: 0, avg_survived: 0 };
+  var defMark = (sr.avg_unit_details && sr.avg_unit_details.defender && sr.avg_unit_details.defender.mark) || { initial_count: 0, avg_survived: 0 };
+
+  var atkRem = {
+    inf:  Math.round(atkInf.avg_survived  || 0),
+    cav:  Math.round(atkLanc.avg_survived || 0),
+    arch: Math.round(atkMark.avg_survived || 0),
+  };
+  atkRem.total = atkRem.inf + atkRem.cav + atkRem.arch;
+  var defRem = {
+    inf:  Math.round(defInf.avg_survived  || 0),
+    cav:  Math.round(defLanc.avg_survived || 0),
+    arch: Math.round(defMark.avg_survived || 0),
+  };
+  defRem.total = defRem.inf + defRem.cav + defRem.arch;
+
+  var atkInit = {
+    inf:  atkInf.initial_count  || 0,
+    cav:  atkLanc.initial_count || 0,
+    arch: atkMark.initial_count || 0,
+  };
+  atkInit.total = atkInit.inf + atkInit.cav + atkInit.arch;
+  var defInit = {
+    inf:  defInf.initial_count  || 0,
+    cav:  defLanc.initial_count || 0,
+    arch: defMark.initial_count || 0,
+  };
+  defInit.total = defInit.inf + defInit.cav + defInit.arch;
+
+  var atkCas = {
+    inf:  atkInit.inf  - atkRem.inf,
+    cav:  atkInit.cav  - atkRem.cav,
+    arch: atkInit.arch - atkRem.arch,
+  };
+  atkCas.total = atkCas.inf + atkCas.cav + atkCas.arch;
+  var defCas = {
+    inf:  defInit.inf  - defRem.inf,
+    cav:  defInit.cav  - defRem.cav,
+    arch: defInit.arch - defRem.arch,
+  };
+  defCas.total = defCas.inf + defCas.cav + defCas.arch;
+
+  // Use win rate to determine "winner" for UI
+  var winRate = sr.win_rate_attacker != null ? sr.win_rate_attacker : 0.5;
+  var winner = winRate > 0.5 ? "attacker" : winRate < 0.5 ? "defender" : "draw";
+
+  var ratio = defCas.total > 0 && atkCas.total > 0
+    ? (defCas.total / atkCas.total)
+    : winRate >= 0.5 ? 999 : 0.001;
+
+  var normalized = {
+    atkDmg: defCas.total,   // proxy: damage = casualties caused
+    defDmg: atkCas.total,
+    ratio: ratio,
+    atkSM: { total: 1, damageUp: 1, oppDefDown: 1, oppDmgDown: 1, defUp: 1 },
+    defSM: { total: 1, damageUp: 1, oppDefDown: 1, oppDmgDown: 1, defUp: 1 },
+    atkRemaining: atkRem,
+    defRemaining: defRem,
+    atkCasualties: atkCas,
+    defCasualties: defCas,
+    winner: winner,
+    rounds: 0,
+    winRateAttacker: winRate,
+    apiResult: sr, // raw API response for advanced UIs
+  };
+
+  // Cache (with simple LRU eviction)
+  if (__apiSimCache.size >= __API_CACHE_MAX) {
+    var firstKey = __apiSimCache.keys().next().value;
+    __apiSimCache.delete(firstKey);
+  }
+  __apiSimCache.set(key, normalized);
+  return normalized;
+}
+
 function getBaseStats(troopType, tier, tg) {
   var tierNum = typeof tier === "string" ? parseInt(tier.replace("T","")) : tier;
   var tgNum = typeof tg === "string" ? parseInt(tg.replace("TG","")) : (tg || 5);
@@ -4857,12 +5025,42 @@ function App() {
     infTg: oppBR.infTg != null ? oppBR.infTg : 5, cavTg: oppBR.cavTg != null ? oppBR.cavTg : 5, archTg: oppBR.archTg != null ? oppBR.archTg : 5
   }), [oppBR]);
 
-  // Full battle result with heroes/skills
-  const fullBattleResult = useMemo(() => {
-    if (fullBattleAtk.troops.Infantry + fullBattleAtk.troops.Cavalry + fullBattleAtk.troops.Archer === 0) return null;
-    if (fullBattleDef.troops.Infantry + fullBattleDef.troops.Cavalry + fullBattleDef.troops.Archer === 0) return null;
-    return calcBattleFull(fullBattleAtk, fullBattleDef);
-  }, [fullBattleAtk, fullBattleDef]);
+  // Full battle result with heroes/skills — async via /api/battle-sim (kingshotsimulator API)
+  // Falls back to local calcBattleFull if the API is unavailable
+  const [fullBattleResult, setFullBattleResult] = useState(null);
+  const [fullBattleLoading, setFullBattleLoading] = useState(false);
+  const [fullBattleError, setFullBattleError] = useState(null);
+  useEffect(() => {
+    const atkTotal = fullBattleAtk.troops.Infantry + fullBattleAtk.troops.Cavalry + fullBattleAtk.troops.Archer;
+    const defTotal = fullBattleDef.troops.Infantry + fullBattleDef.troops.Cavalry + fullBattleDef.troops.Archer;
+    if (atkTotal === 0 || defTotal === 0) {
+      setFullBattleResult(null);
+      setFullBattleError(null);
+      return;
+    }
+    // Always show local sim immediately for instant feedback
+    setFullBattleResult(calcBattleFull(fullBattleAtk, fullBattleDef));
+    setFullBattleError(null);
+    // Then fetch the accurate API result and replace
+    setFullBattleLoading(true);
+    let cancelled = false;
+    const debounce = setTimeout(() => {
+      fetchBattleSimulation(myBR, oppBR, 20)
+        .then(result => {
+          if (!cancelled) {
+            setFullBattleResult(result);
+            setFullBattleError(null);
+          }
+        })
+        .catch(err => {
+          if (!cancelled) setFullBattleError(err.message || "API call failed");
+        })
+        .finally(() => {
+          if (!cancelled) setFullBattleLoading(false);
+        });
+    }, 500);
+    return () => { cancelled = true; clearTimeout(debounce); };
+  }, [fullBattleAtk, fullBattleDef, myBR, oppBR]);
 
   // Joiner optimizer (only run when recommend tab is active and we have data)
   const [joinerResults, setJoinerResults] = useState(null);
@@ -5833,9 +6031,9 @@ function App() {
       fontWeight: 800,
       color: fullBattleResult.ratio >= 1 ? "#4ade80" : "#f87171"
     }
-  }, fullBattleResult.winner === "attacker" ? "You Win" : fullBattleResult.winner === "defender" ? "Opponent Wins" : "Draw", " \u2014 Ratio ", fullBattleResult.ratio.toFixed(3)), fullBattleResult.atkCasualties && /*#__PURE__*/React.createElement("div", {
+  }, fullBattleResult.winner === "attacker" ? "You Win" : fullBattleResult.winner === "defender" ? "Opponent Wins" : "Draw", fullBattleResult.winRateAttacker != null ? " (" + Math.round(fullBattleResult.winRateAttacker * 100) + "% win rate)" : "", fullBattleLoading && /*#__PURE__*/React.createElement("span", { style: { marginLeft: 8, color: "#fbbf24", fontSize: 10 } }, "↻ verifying via API..."), fullBattleError && /*#__PURE__*/React.createElement("span", { style: { marginLeft: 8, color: "#f87171", fontSize: 10 } }, "(API error: ", fullBattleError, ")")), fullBattleResult.atkCasualties && /*#__PURE__*/React.createElement("div", {
     style: { fontSize: 10, color: "#94a3b8", marginTop: 4 }
-  }, "Your casualties: ", fullBattleResult.atkCasualties.total.toLocaleString(), " / Opp casualties: ", fullBattleResult.defCasualties.total.toLocaleString(), " \u2014 Optimizing ", fullBattleResult.ratio >= 1 ? "Opponent" : "Your", " side")), joinerResults && joinerResults.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "Your casualties: ", fullBattleResult.atkCasualties.total.toLocaleString(), " / Opp casualties: ", fullBattleResult.defCasualties.total.toLocaleString(), " \u2014 Optimizing ", fullBattleResult.winner === "attacker" ? "Opponent" : "Your", " side")), joinerResults && joinerResults.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 12
     }
