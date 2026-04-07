@@ -5113,7 +5113,92 @@ function App() {
   }, [fullBattleResult, myBR, oppBR]);
 
   // Reset verification state whenever a new formation set is computed
-  useEffect(() => { setFormationVerify({}); }, [formationResults]);
+  useEffect(() => { setFormationVerify({}); setApiOptimal(null); }, [formationResults]);
+
+  // True optimal formation found via API cross-check
+  // { idx, inf, cav, arch, ratio, winRate, total }
+  const [apiOptimal, setApiOptimal] = useState(null);
+  const [apiOptimalRunning, setApiOptimalRunning] = useState(false);
+
+  // Cross-check the top N local formation picks against the API in parallel,
+  // then re-rank by API result and surface the true optimal formation.
+  const findOptimalViaApi = useCallback(async () => {
+    if (!fullBattleResult || !formationResults || formationResults.length === 0) return;
+    setApiOptimalRunning(true);
+    setApiOptimal(null);
+
+    const loserIsDefender = fullBattleResult.ratio >= 1;
+    const loserBR = loserIsDefender ? oppBR : myBR;
+    const winnerBR = loserIsDefender ? myBR : oppBR;
+    const total = (loserBR.inf || 0) + (loserBR.cav || 0) + (loserBR.arch || 0);
+    if (total === 0) { setApiOptimalRunning(false); return; }
+
+    // Pick the top 5 local picks (= what's displayed)
+    const picks = formationResults.slice(0, 5);
+
+    // Mark each as loading
+    setFormationVerify(prev => {
+      const next = { ...prev };
+      picks.forEach((_, i) => { next[i] = { status: "loading" }; });
+      return next;
+    });
+
+    // Call API for each pick in parallel
+    const apiResults = await Promise.all(picks.map(async (fr, i) => {
+      try {
+        const modifiedLoser = {
+          ...loserBR,
+          inf: Math.round(total * (fr.inf / 100)),
+          cav: Math.round(total * (fr.cav / 100)),
+          arch: Math.round(total * (fr.arch / 100)),
+        };
+        const apiResult = loserIsDefender
+          ? await fetchBattleSimulation(winnerBR, modifiedLoser, 20)
+          : await fetchBattleSimulation(modifiedLoser, winnerBR, 20);
+        const loserCas = loserIsDefender ? apiResult.defCasualties.total : apiResult.atkCasualties.total;
+        const winnerCas = loserIsDefender ? apiResult.atkCasualties.total : apiResult.defCasualties.total;
+        const apiRatio = loserCas > 0 ? winnerCas / loserCas : 999;
+        const winRateForLoser = loserIsDefender
+          ? (1 - (apiResult.winRateAttacker || 0))
+          : (apiResult.winRateAttacker || 0);
+        return { i, fr, apiRatio, winRateForLoser, ok: true };
+      } catch (err) {
+        return { i, fr, error: (err && err.message) || "Failed", ok: false };
+      }
+    }));
+
+    // Update verify state for each row
+    setFormationVerify(prev => {
+      const next = { ...prev };
+      apiResults.forEach(r => {
+        next[r.i] = r.ok
+          ? { status: "done", ratio: r.apiRatio, winRate: r.winRateForLoser }
+          : { status: "error", error: r.error };
+      });
+      return next;
+    });
+
+    // Find the optimal: highest winRate for loser; tiebreak by ratio closest to 1.0
+    const successful = apiResults.filter(r => r.ok);
+    if (successful.length === 0) { setApiOptimalRunning(false); return; }
+    successful.sort((a, b) => {
+      const wDiff = b.winRateForLoser - a.winRateForLoser;
+      if (Math.abs(wDiff) > 0.001) return wDiff;
+      return Math.abs(a.apiRatio - 1) - Math.abs(b.apiRatio - 1);
+    });
+    const best = successful[0];
+    setApiOptimal({
+      idx: best.i,
+      inf: best.fr.inf,
+      cav: best.fr.cav,
+      arch: best.fr.arch,
+      ratio: best.apiRatio,
+      winRate: best.winRateForLoser,
+      total: total,
+      side: loserIsDefender ? "Opponent" : "You",
+    });
+    setApiOptimalRunning(false);
+  }, [fullBattleResult, formationResults, myBR, oppBR]);
 
   // Actual battle result — for calibrating the formula
   const [actualResult, setActualResult] = useState({
@@ -6160,7 +6245,48 @@ function App() {
       color: "#818cf8",
       marginBottom: 6
     }
-  }, "Best Formation Splits for ", fullBattleResult && fullBattleResult.ratio >= 1 ? "Opponent" : "You", " (closest to ratio 1.0)"), /*#__PURE__*/React.createElement("div", {
+  }, "Best Formation Splits for ", fullBattleResult && fullBattleResult.ratio >= 1 ? "Opponent" : "You", " (closest to ratio 1.0)"),
+  /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }
+  },
+    /*#__PURE__*/React.createElement("button", {
+      onClick: findOptimalViaApi,
+      disabled: apiOptimalRunning,
+      style: {
+        fontSize: 10, padding: "5px 10px", borderRadius: 5,
+        border: "1px solid #4ade80",
+        background: apiOptimalRunning ? "#475569" : "rgba(74,222,128,0.15)",
+        color: "#86efac", fontWeight: 700,
+        cursor: apiOptimalRunning ? "wait" : "pointer",
+      }
+    }, apiOptimalRunning ? "🔍 Cross-checking via API…" : "🔍 Find Optimal via API"),
+    apiOptimal && /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1, minWidth: 200, padding: "6px 10px", borderRadius: 5,
+        background: "rgba(74,222,128,0.10)", border: "1px solid rgba(74,222,128,0.4)",
+        fontSize: 10, color: "#bbf7d0", fontFamily: C.fontMono,
+      }
+    },
+      /*#__PURE__*/React.createElement("div", { style: { fontWeight: 800, color: "#4ade80", fontSize: 11, marginBottom: 2 } },
+        "✓ True Optimal Formation (canonical model)"
+      ),
+      /*#__PURE__*/React.createElement("div", null,
+        "Inf ", apiOptimal.inf, "% / Cav ", apiOptimal.cav, "% / Arc ", apiOptimal.arch, "%",
+        " — ", apiOptimal.side, " win rate: ",
+        /*#__PURE__*/React.createElement("strong", { style: { color: apiOptimal.winRate >= 0.5 ? "#4ade80" : apiOptimal.winRate >= 0.25 ? "#fbbf24" : "#f87171" } },
+          Math.round(apiOptimal.winRate * 100), "%"
+        ),
+        " (ratio ", apiOptimal.ratio.toFixed(3), ")"
+      ),
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: "#86efac", marginTop: 2 } },
+        "Apply: ",
+        Math.round(apiOptimal.total * apiOptimal.inf / 100).toLocaleString(), " inf / ",
+        Math.round(apiOptimal.total * apiOptimal.cav / 100).toLocaleString(), " cav / ",
+        Math.round(apiOptimal.total * apiOptimal.arch / 100).toLocaleString(), " arch"
+      )
+    )
+  ),
+  /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gap: 4
@@ -6173,7 +6299,8 @@ function App() {
       gap: 8,
       padding: "6px 10px",
       borderRadius: 5,
-      background: i === 0 ? "rgba(74,222,128,0.06)" : "rgba(0,0,0,0.12)"
+      background: apiOptimal && apiOptimal.idx === i ? "rgba(74,222,128,0.18)" : i === 0 ? "rgba(74,222,128,0.06)" : "rgba(0,0,0,0.12)",
+      border: apiOptimal && apiOptimal.idx === i ? "1px solid rgba(74,222,128,0.5)" : "1px solid transparent"
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
