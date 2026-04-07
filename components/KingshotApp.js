@@ -5066,6 +5066,54 @@ function App() {
   const [joinerResults, setJoinerResults] = useState(null);
   const [formationResults, setFormationResults] = useState(null);
   const [showAllRecs, setShowAllRecs] = useState(false);
+  // Verification state for Recommend tab top picks (keyed by formation index)
+  // Each entry: { status: "loading"|"done"|"error", ratio?, winRate?, error? }
+  const [formationVerify, setFormationVerify] = useState({});
+
+  // Verify a formation recommendation against the kingshotsimulator API
+  // Applies the formation to the LOSER side, keeping the winner's setup fixed
+  const verifyFormation = useCallback(async (fr, idx) => {
+    if (!fullBattleResult) return;
+    setFormationVerify(prev => ({ ...prev, [idx]: { status: "loading" } }));
+    try {
+      // Determine which side is the loser (the one being optimized)
+      const loserIsDefender = fullBattleResult.ratio >= 1;
+      const loserBR = loserIsDefender ? oppBR : myBR;
+      const winnerBR = loserIsDefender ? myBR : oppBR;
+      const total = (loserBR.inf || 0) + (loserBR.cav || 0) + (loserBR.arch || 0);
+      if (total === 0) throw new Error("Loser has no troops");
+      const modifiedLoser = {
+        ...loserBR,
+        inf: Math.round(total * (fr.inf / 100)),
+        cav: Math.round(total * (fr.cav / 100)),
+        arch: Math.round(total * (fr.arch / 100)),
+      };
+      // Call API: attacker = winner if loser is defender, else modified loser
+      const apiResult = loserIsDefender
+        ? await fetchBattleSimulation(winnerBR, modifiedLoser, 20)
+        : await fetchBattleSimulation(modifiedLoser, winnerBR, 20);
+      // Compute the equivalent ratio from loser's perspective
+      // ratio < 1 = loser losing badly, ratio = 1 = draw, ratio > 1 = loser winning
+      const loserCas = loserIsDefender ? apiResult.defCasualties.total : apiResult.atkCasualties.total;
+      const winnerCas = loserIsDefender ? apiResult.atkCasualties.total : apiResult.defCasualties.total;
+      const apiRatio = loserCas > 0 ? winnerCas / loserCas : 999;
+      const winRateForLoser = loserIsDefender
+        ? (1 - (apiResult.winRateAttacker || 0))
+        : (apiResult.winRateAttacker || 0);
+      setFormationVerify(prev => ({
+        ...prev,
+        [idx]: { status: "done", ratio: apiRatio, winRate: winRateForLoser },
+      }));
+    } catch (err) {
+      setFormationVerify(prev => ({
+        ...prev,
+        [idx]: { status: "error", error: (err && err.message) || "Failed" },
+      }));
+    }
+  }, [fullBattleResult, myBR, oppBR]);
+
+  // Reset verification state whenever a new formation set is computed
+  useEffect(() => { setFormationVerify({}); }, [formationResults]);
 
   // Actual battle result — for calibrating the formula
   const [actualResult, setActualResult] = useState({
@@ -6195,7 +6243,41 @@ function App() {
       fontSize: 8,
       color: "#64748b"
     }
-  }, "ratio")))))), !joinerResults && /*#__PURE__*/React.createElement("p", {
+  }, "ratio")), /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", alignItems: "center", gap: 4, marginLeft: 6 }
+  },
+    formationVerify[i] && formationVerify[i].status === "done" && /*#__PURE__*/React.createElement("div", {
+      style: { textAlign: "right", minWidth: 60 }
+    },
+      /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 12,
+          fontWeight: 800,
+          color: Math.abs(formationVerify[i].ratio - 1) < 0.1 ? "#4ade80" : Math.abs(formationVerify[i].ratio - 1) < 0.3 ? "#fbbf24" : "#f87171"
+        }
+      }, formationVerify[i].ratio.toFixed(3)),
+      /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 8, color: "#64748b" }
+      }, "API ", Math.round((formationVerify[i].winRate || 0) * 100), "%")
+    ),
+    formationVerify[i] && formationVerify[i].status === "error" && /*#__PURE__*/React.createElement("span", {
+      style: { fontSize: 9, color: "#f87171" }
+    }, "err"),
+    /*#__PURE__*/React.createElement("button", {
+      onClick: () => verifyFormation(fr, i),
+      disabled: formationVerify[i] && formationVerify[i].status === "loading",
+      style: {
+        fontSize: 9,
+        padding: "3px 7px",
+        borderRadius: 4,
+        border: "1px solid #818cf8",
+        background: formationVerify[i] && formationVerify[i].status === "loading" ? "#475569" : "rgba(129,140,248,0.15)",
+        color: "#c7d2fe",
+        cursor: formationVerify[i] && formationVerify[i].status === "loading" ? "wait" : "pointer",
+        fontWeight: 700,
+      }
+    }, formationVerify[i] && formationVerify[i].status === "loading" ? "..." : formationVerify[i] && formationVerify[i].status === "done" ? "↻" : "Verify")
+  )))))), !joinerResults && /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: 10,
       color: "#64748b",
