@@ -5025,17 +5025,15 @@ function App() {
     const loser = loserSide === "attacker" ? fullBattleAtk : fullBattleDef;
     const loserTotal = loserSide === "attacker" ? atkTotal : defTotal;
 
-    // Optimize the loser's joiners
+    // Optimize the loser's joiners (assumes optimal joiners)
     const jr = optimizeJoiners(fullBattleAtk, fullBattleDef, loserSide);
     setJoinerResults(jr);
 
-    // Use best joiners for formation optimization
-    const bestJoiners = jr.length > 0 ? jr[0].combo : loser.joiners;
-    const loserWithJoiners = { ...loser, joiners: bestJoiners };
-
+    // Optimize the loser's formation using their CURRENT joiner setup
+    // (formation-in-isolation: don't assume optimal joiners are applied)
     const fr = loserSide === "attacker"
-      ? optimizeFormation(loserWithJoiners, fullBattleDef, loserTotal, "attacker")
-      : optimizeFormation(fullBattleAtk, loserWithJoiners, loserTotal, "defender");
+      ? optimizeFormation(fullBattleAtk, fullBattleDef, loserTotal, "attacker")
+      : optimizeFormation(fullBattleAtk, fullBattleDef, loserTotal, "defender");
     setFormationResults(fr);
   }, [fullBattleAtk, fullBattleDef]);
   const gearScore = stats => {
