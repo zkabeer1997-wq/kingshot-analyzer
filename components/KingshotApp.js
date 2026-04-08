@@ -4906,6 +4906,9 @@ const TABS = [{
   id: "compare",
   label: "⚔️ Compare"
 }, {
+  id: "gear",
+  label: "🛡️ Gear Comparison and Optimizer"
+}, {
   id: "recommend",
   label: "🎯 Recommend"
 }, {
@@ -5456,6 +5459,7 @@ function App() {
   }, TABS.map(t => {
     const tabColors = {
       compare: C.accent,
+      gear: "#fbbf24",
       recommend: C.green,
       costs: C.violet,
       reference: "#f472b6",
@@ -5536,7 +5540,7 @@ function App() {
       fontFamily: C.fontMono,
       color: C.red
     }
-  }, oppScore.toFixed(0)))), /*#__PURE__*/React.createElement("div", {
+  }, oppScore.toFixed(0))))), tab === "gear" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: S.sectionDivider
   }, "\u2699 GOVERNOR GEAR"), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5602,7 +5606,7 @@ function App() {
     data: oppData,
     setData: setOppData,
     section: "hero"
-  })), /*#__PURE__*/React.createElement("div", {
+  }))), tab === "compare" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: S.sectionDivider
   }, "\uD83D\uDCCB BATTLE REPORT STATS"), /*#__PURE__*/React.createElement("div", {
     style: {
